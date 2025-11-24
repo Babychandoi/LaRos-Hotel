@@ -201,4 +201,12 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
            "GROUP BY b.roomType.id, b.roomType.name " +
            "ORDER BY COUNT(b) DESC")
     List<Object[]> findMostPopularRoomTypes(Pageable pageable);
+
+    // Query for VAT report - get completed bookings in date range
+    @EntityGraph(attributePaths = {"bookingServices"})
+    List<Booking> findByStatusAndCheckOutBetween(
+        Booking.Status status,
+        LocalDate startDate,
+        LocalDate endDate
+    );
 }

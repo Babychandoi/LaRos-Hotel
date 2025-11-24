@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import statisticalService from '../../services/statistical.service';
 import roomService from '../../services/room.service';
 import bookingService from '../services/booking.service';
+import vatService from '../../services/vat.service';
 import { Line, Bar, Pie } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -96,6 +97,10 @@ const AdminDashboard = () => {
   const [pieData, setPieData] = useState(null);
   const [dailyData, setDailyData] = useState([]);
   const [exporting, setExporting] = useState(false);
+  const [exportingVAT, setExportingVAT] = useState(false);
+  const [showVATModal, setShowVATModal] = useState(false);
+  const [vatData, setVatData] = useState(null);
+  const [khoanchitieu, setKhoanchitieu] = useState('');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear()); // Năm được chọn cho thống kê theo quý
 
   // Date range filter
@@ -793,6 +798,117 @@ const AdminDashboard = () => {
     }
   };
 
+  // Hàm tính toán dữ liệu thuế VAT
+  const calculateVATData = async () => {
+    try {
+      setExportingVAT(true);
+      
+      // Lấy dữ liệu từ backend
+      const [bookingsRes, transactionsRes] = await Promise.all([
+        bookingService.getAllBookings({ 
+          page: 0, 
+          size: 10000,
+          startDate: startDate,
+          endDate: endDate
+        }),
+        bookingService.getAllTransactions({ 
+          page: 0, 
+          size: 10000, 
+          status: 'success',
+          startDate: startDate,
+          endDate: endDate
+        })
+      ]);
+
+      const bookings = bookingsRes?.content || bookingsRes?.data || bookingsRes || [];
+      const transactions = transactionsRes?.content || transactionsRes?.data || transactionsRes || [];
+
+      // Lọc booking đã hoàn trả phòng (checked_out)
+      const completedBookings = bookings.filter(b => b.status === 'checked_out');
+
+      // Tính tổng doanh thu dịch vụ từ các booking đã hoàn trả
+      let totalServiceRevenue = 0;
+      completedBookings.forEach(booking => {
+        if (booking.bookingServices && Array.isArray(booking.bookingServices)) {
+          booking.bookingServices.forEach(service => {
+            const serviceAmount = parseFloat(service.price || 0) * parseInt(service.quantity || 0);
+            totalServiceRevenue += serviceAmount;
+          });
+        }
+      });
+
+      // Tính tổng doanh thu phòng từ transactions
+      const totalRoomRevenue = transactions.reduce((sum, t) => {
+        const amount = parseFloat(t.amount || 0) || 0;
+        return sum + amount;
+      }, 0);
+
+      // Khởi tạo dữ liệu VAT (khoản chi sẽ được nhập sau)
+      const vatData = {
+        kithue: `${formatDate(startDate)} - ${formatDate(endDate)}`,
+        khoanchi: 0, // Sẽ được cập nhật khi người dùng nhập
+        doanhthudichvu: totalServiceRevenue,
+        doanhthu: totalRoomRevenue,
+        vatkhoanchi: 0,
+        tongkhoanchi: 0,
+        vatdoanhthudichvu: totalServiceRevenue * 0.1,
+        tongdoanhthudichvu: totalServiceRevenue * 1.1,
+        vatdoanhthu: totalRoomRevenue * 0.1
+      };
+
+      setVatData(vatData);
+      setKhoanchitieu(''); // Reset input
+      setShowVATModal(true);
+    } catch (error) {
+      console.error('Error calculating VAT data:', error);
+      alert('Lỗi khi tính toán dữ liệu thuế: ' + (error.message || 'Vui lòng thử lại'));
+    } finally {
+      setExportingVAT(false);
+    }
+  };
+
+  // Hàm cập nhật khoản chi
+  const handleKhoanchiChange = (value) => {
+    const khoanchi = parseFloat(value) || 0;
+    setKhoanchitieu(value);
+    
+    if (vatData) {
+      const updatedVatData = {
+        ...vatData,
+        khoanchi: khoanchi,
+        vatkhoanchi: khoanchi * 0.1,
+        tongkhoanchi: khoanchi * 1.1
+      };
+      setVatData(updatedVatData);
+    }
+  };
+
+  // Hàm xuất file thuế VAT
+  const exportVATReport = async () => {
+    try {
+      if (!vatData) {
+        alert('Vui lòng tính toán dữ liệu thuế trước');
+        return;
+      }
+
+      if (!khoanchitieu || parseFloat(khoanchitieu) <= 0) {
+        alert('Vui lòng nhập khoản chi tiêu hợp lệ');
+        return;
+      }
+
+      setExportingVAT(true);
+      // Gửi khoản chi cùng với startDate và endDate
+      await vatService.exportVATReport(startDate, endDate, parseFloat(khoanchitieu));
+      setShowVATModal(false);
+      alert('Xuất báo cáo thuế thành công!');
+    } catch (error) {
+      console.error('Error exporting VAT report:', error);
+      alert('Lỗi khi xuất báo cáo thuế: ' + (error.message || 'Vui lòng thử lại'));
+    } finally {
+      setExportingVAT(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -839,7 +955,25 @@ const AdminDashboard = () => {
               Xuất Excel
             </>
           )}
-          </button>
+        </button>
+        
+        <button
+          onClick={calculateVATData}
+          disabled={exportingVAT}
+          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg"
+        >
+          {exportingVAT ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+              Đang tính...
+            </>
+          ) : (
+            <>
+              <i className="fas fa-file-invoice-dollar"></i>
+              Xuất File Thuế
+            </>
+          )}
+        </button>
         </div>
       </div>
 
@@ -1045,8 +1179,173 @@ const AdminDashboard = () => {
             <div className="flex items-center justify-center h-full">Đang tải...</div>}
         </div>
       </div>
+
+      {/* Modal hiển thị dữ liệu thuế VAT */}
+      {showVATModal && vatData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-t-2xl flex justify-between items-center">
+              <h3 className="text-2xl font-bold flex items-center gap-2">
+                <i className="fas fa-file-invoice-dollar"></i>
+                Báo Cáo Thuế GTGT
+              </h3>
+              <button
+                onClick={() => setShowVATModal(false)}
+                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-2 transition-all"
+              >
+                <i className="fas fa-times text-xl"></i>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Kỳ thuế */}
+              <div className="bg-blue-50 border-l-4 border-blue-600 p-4 rounded">
+                <div className="flex items-center gap-2 mb-2">
+                  <i className="fas fa-calendar-alt text-blue-600"></i>
+                  <h4 className="font-bold text-gray-800">Kỳ Thuế</h4>
+                </div>
+                <p className="text-lg font-semibold text-blue-700">{vatData.kithue}</p>
+              </div>
+
+              {/* Khoản chi - Nhập thủ công */}
+              <div className="bg-white border-2 border-red-300 rounded-lg p-4 shadow-sm">
+                <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <i className="fas fa-shopping-cart text-red-600"></i>
+                  Giá trị và thuế GTGT của hàng hoá, dịch vụ mua vào
+                </h4>
+                
+                {/* Input nhập khoản chi */}
+                <div className="mb-4 bg-red-50 p-4 rounded-lg border border-red-200">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    <i className="fas fa-edit text-red-600 mr-2"></i>
+                    Nhập khoản chi tiêu (VNĐ) <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={khoanchitieu}
+                    onChange={(e) => handleKhoanchiChange(e.target.value)}
+                    placeholder="Nhập số tiền khoản chi..."
+                    className="w-full px-4 py-3 border-2 border-red-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-lg font-semibold"
+                    min="0"
+                    step="1000"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    <i className="fas fa-info-circle mr-1"></i>
+                    Nhập tổng giá trị hàng hoá, dịch vụ mua vào trong kỳ
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-gray-50 p-3 rounded border border-gray-200">
+                    <p className="text-sm text-gray-600 mb-1">Giá trị hàng hoá/dịch vụ</p>
+                    <p className="text-lg font-bold text-gray-800">{formatCurrency(vatData.khoanchi)}</p>
+                  </div>
+                  <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
+                    <p className="text-sm text-gray-600 mb-1">Thuế GTGT (10%)</p>
+                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(vatData.vatkhoanchi)}</p>
+                  </div>
+                  <div className="bg-red-50 p-3 rounded border border-red-200">
+                    <p className="text-sm text-gray-600 mb-1">Tổng cộng</p>
+                    <p className="text-lg font-bold text-red-700">{formatCurrency(vatData.tongkhoanchi)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Doanh thu dịch vụ */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <i className="fas fa-concierge-bell text-purple-600"></i>
+                  Doanh thu dịch vụ
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-sm text-gray-600 mb-1">Doanh thu dịch vụ</p>
+                    <p className="text-lg font-bold text-gray-800">{formatCurrency(vatData.doanhthudichvu)}</p>
+                  </div>
+                  <div className="bg-yellow-50 p-3 rounded">
+                    <p className="text-sm text-gray-600 mb-1">Thuế GTGT (10%)</p>
+                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(vatData.vatdoanhthudichvu)}</p>
+                  </div>
+                  <div className="bg-purple-50 p-3 rounded">
+                    <p className="text-sm text-gray-600 mb-1">Tổng doanh thu dịch vụ</p>
+                    <p className="text-lg font-bold text-purple-700">{formatCurrency(vatData.tongdoanhthudichvu)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Doanh thu phòng */}
+              <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <i className="fas fa-bed text-green-600"></i>
+                  Doanh thu phòng
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-gray-50 p-3 rounded">
+                    <p className="text-sm text-gray-600 mb-1">Doanh thu phòng</p>
+                    <p className="text-lg font-bold text-gray-800">{formatCurrency(vatData.doanhthu)}</p>
+                  </div>
+                  <div className="bg-yellow-50 p-3 rounded">
+                    <p className="text-sm text-gray-600 mb-1">Thuế GTGT (10%)</p>
+                    <p className="text-lg font-bold text-yellow-700">{formatCurrency(vatData.vatdoanhthu)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tổng kết */}
+              <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-500 rounded-lg p-4">
+                <h4 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                  <i className="fas fa-calculator text-green-600"></i>
+                  Tổng kết
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-white p-3 rounded shadow-sm">
+                    <p className="text-sm text-gray-600 mb-1">Tổng doanh thu (Phòng + Dịch vụ)</p>
+                    <p className="text-xl font-bold text-green-700">
+                      {formatCurrency(vatData.doanhthu + vatData.doanhthudichvu)}
+                    </p>
+                  </div>
+                  <div className="bg-white p-3 rounded shadow-sm">
+                    <p className="text-sm text-gray-600 mb-1">Tổng thuế GTGT phải nộp</p>
+                    <p className="text-xl font-bold text-blue-700">
+                      {formatCurrency(vatData.vatdoanhthu + vatData.vatdoanhthudichvu - vatData.vatkhoanchi)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-gray-50 px-6 py-4 rounded-b-2xl flex justify-end gap-3 border-t">
+              <button
+                onClick={() => setShowVATModal(false)}
+                className="px-6 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg font-semibold transition-all"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={exportVATReport}
+                disabled={exportingVAT}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-all flex items-center gap-2"
+              >
+                {exportingVAT ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Đang xuất...
+                  </>
+                ) : (
+                  <>
+                    <i className="fas fa-download"></i>
+                    Xuất File DOCX
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default AdminDashboard;
+export
+ default AdminDashboard;
