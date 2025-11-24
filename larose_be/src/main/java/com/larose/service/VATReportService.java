@@ -67,14 +67,17 @@ public class VATReportService {
                 endDate
         );
 
-        // Tính tổng doanh thu dịch vụ
+        // Tính tổng doanh thu dịch vụ từ bảng booking_services
+        // Lấy từ các booking đã checkout trong khoảng thời gian
         BigDecimal totalServiceRevenue = BigDecimal.ZERO;
         for (Booking booking : completedBookings) {
             if (booking.getBookingServices() != null) {
-                for (BookingService service : booking.getBookingServices()) {
-                    BigDecimal serviceAmount = service.getPrice()
-                            .multiply(new BigDecimal(service.getQuantity()));
-                    totalServiceRevenue = totalServiceRevenue.add(serviceAmount);
+                for (BookingService bookingService : booking.getBookingServices()) {
+                    // Sử dụng totalPrice đã được tính sẵn trong entity
+                    BigDecimal serviceAmount = bookingService.getTotalPrice();
+                    if (serviceAmount != null) {
+                        totalServiceRevenue = totalServiceRevenue.add(serviceAmount);
+                    }
                 }
             }
         }
