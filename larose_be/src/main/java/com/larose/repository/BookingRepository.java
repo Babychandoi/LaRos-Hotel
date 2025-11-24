@@ -203,10 +203,30 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Object[]> findMostPopularRoomTypes(Pageable pageable);
 
     // Query for VAT report - get completed bookings in date range
-    @EntityGraph(attributePaths = {"bookingServices"})
+    @EntityGraph(attributePaths = {"bookingServices", "bookingServices.service"})
     List<Booking> findByStatusAndCheckOutBetween(
         Booking.Status status,
         LocalDate startDate,
         LocalDate endDate
     );
+    
+    // Admin queries with bookingServices loaded
+    @EntityGraph(attributePaths = {"room", "roomType", "user", "bookingServices", "bookingServices.service"})
+    Page<Booking> findByStatus(Booking.Status status, Pageable pageable);
+    
+    @EntityGraph(attributePaths = {"room", "roomType", "user", "bookingServices", "bookingServices.service"})
+    @Query("SELECT b FROM Booking b WHERE b.status = :status AND " +
+           "(LOWER(b.bookingCode) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+           "LOWER(b.user.fullName) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+           "LOWER(b.user.email) LIKE LOWER(CONCAT('%', :search, '%')))")
+    Page<Booking> findByStatusAndSearchTerm(@Param("status") Booking.Status status, 
+                                            @Param("search") String search, 
+                                            Pageable pageable);
+    
+    @EntityGraph(attributePaths = {"room", "roomType", "user", "bookingServices", "bookingServices.service"})
+    @Query("SELECT b FROM Booking b WHERE " +
+           "LOWER(b.bookingCode) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+           "LOWER(b.user.fullName) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+           "LOWER(b.user.email) LIKE LOWER(CONCAT('%', :search, '%'))")
+    Page<Booking> findBySearchTerm(@Param("search") String search, Pageable pageable);
 }

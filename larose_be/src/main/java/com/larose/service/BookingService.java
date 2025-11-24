@@ -172,12 +172,21 @@ public class BookingService {
 
         if (status != null && !status.isEmpty() && !status.equalsIgnoreCase("all")) {
             try {
-                bookings = bookingRepository.findByStatusOrderByCreatedAtDesc(Booking.Status.valueOf(status), pageable);
+                Booking.Status bookingStatus = Booking.Status.valueOf(status);
+                if (search != null && !search.isEmpty()) {
+                    bookings = bookingRepository.findByStatusAndSearchTerm(bookingStatus, search, pageable);
+                } else {
+                    bookings = bookingRepository.findByStatus(bookingStatus, pageable);
+                }
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("Invalid status: " + status);
             }
         } else {
-            bookings = bookingRepository.findAllByOrderByCreatedAtDesc(pageable);
+            if (search != null && !search.isEmpty()) {
+                bookings = bookingRepository.findBySearchTerm(search, pageable);
+            } else {
+                bookings = bookingRepository.findAll(pageable);
+            }
         }
 
         return bookings.map(this::convertToBookingDTO);
@@ -261,41 +270,8 @@ public class BookingService {
     }
 
     private BookingDTO convertToBookingDTO(Booking booking) {
-        BookingDTO dto = new BookingDTO();
-        dto.setId(booking.getId());
-        dto.setBookingCode(booking.getBookingCode());
-        dto.setCheckIn(booking.getCheckIn());
-        dto.setCheckOut(booking.getCheckOut());
-        dto.setNights(booking.getNights());
-        dto.setGuests(booking.getGuests());
-        dto.setPriceTotal(booking.getPriceTotal());
-        dto.setDepositAmount(booking.getDepositAmount());
-        dto.setStatus(booking.getStatus().name());
-        dto.setCancelReason(booking.getCancelReason());
-        dto.setCancelledAt(booking.getCancelledAt());
-        dto.setCreatedAt(booking.getCreatedAt());
-        dto.setUpdatedAt(booking.getUpdatedAt());
-
-        // Thông tin phòng
-        if (booking.getRoom() != null) {
-            dto.setRoomId(booking.getRoom().getId());
-            dto.setRoomTitle(booking.getRoom().getTitle());
-        }
-
-        // Thông tin loại phòng
-        if (booking.getRoomType() != null) {
-            dto.setRoomTypeId(booking.getRoomType().getId());
-            dto.setRoomTypeName(booking.getRoomType().getName());
-        }
-
-        // Thông tin user
-        if (booking.getUser() != null) {
-            dto.setUserId(booking.getUser().getId());
-            dto.setUserEmail(booking.getUser().getEmail());
-            dto.setUserFullName(booking.getUser().getFullName());
-        }
-
-        return dto;
+        // Sử dụng BookingMapper để map tất cả fields bao gồm bookingServices
+        return bookingMapper.toBookingDTO(booking);
     }
 
     /**

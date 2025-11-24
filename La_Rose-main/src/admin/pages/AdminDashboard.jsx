@@ -311,6 +311,23 @@ const AdminDashboard = () => {
         // Lấy danh sách booking IDs của phòng này (tất cả bookings)
         const allRoomBookingIds = allRoomBookings.map(b => b.id);
         
+        // Lọc booking đã trả phòng (checked_out) trong khoảng thời gian
+        // Chỉ tính booking đã checked_out (đã trả phòng)
+        const checkedOutBookingsInRange = allRoomBookings.filter(booking => {
+          // Chỉ lấy booking đã trả phòng
+          if (booking.status !== 'checked_out') return false;
+          
+          if (!booking.checkOut) return false;
+          
+          const checkOutDate = new Date(booking.checkOut);
+          checkOutDate.setHours(0, 0, 0, 0);
+          
+          // Kiểm tra ngày trả phòng có trong khoảng thời gian không
+          const isInRange = checkOutDate >= start && checkOutDate <= end;
+          
+          return isInRange;
+        });
+
         // Lọc booking overlap với khoảng thời gian [startDate, endDate] để xác định trạng thái đặt phòng
         // Overlap: check_in <= endDate AND check_out >= startDate
         const roomBookingsInRange = allRoomBookings.filter(booking => {
@@ -330,25 +347,25 @@ const AdminDashboard = () => {
           return hasOverlap;
         });
 
-        // Tính doanh thu từ các transaction đã thanh toán (status = success) trong khoảng thời gian
-        // Logic: Lấy tất cả transactions đã được filter theo khoảng thời gian (createdAt) từ backend,
-        // sau đó match với room thông qua booking
-        // QUAN TRỌNG: Chỉ tính transactions có booking match với room này
-        const roomTransactions = transactions.filter(t => {
-          // Kiểm tra transaction có bookingId
-          const bookingId = t.bookingDTO?.id || t.bookingId;
-          if (!bookingId) return false;
-          
-          // Kiểm tra booking này có thuộc về phòng này không
-          if (!allRoomBookingIds.includes(bookingId)) return false;
-          
-          return true;
-        });
+        // Tính doanh thu từ các booking đã trả phòng
+        // Tách riêng: Doanh thu phòng và Doanh thu dịch vụ
+        let roomRevenue = 0;
+        let serviceRevenue = 0;
         
-        const revenue = roomTransactions.reduce((sum, t) => {
-          const amount = parseFloat(t.amount || 0) || 0;
-          return sum + amount;
-        }, 0);
+        checkedOutBookingsInRange.forEach(booking => {
+          // Tiền phòng
+          const roomPrice = parseFloat(booking.priceTotal || 0) || 0;
+          roomRevenue += roomPrice;
+          
+          // Tiền dịch vụ (từ bookingServices)
+          if (booking.bookingServices && Array.isArray(booking.bookingServices)) {
+            const servicePrice = booking.bookingServices.reduce((sum, service) => {
+              const total = parseFloat(service.totalPrice || 0) || 0;
+              return sum + total;
+            }, 0);
+            serviceRevenue += servicePrice;
+          }
+        });
 
         // Kiểm tra trạng thái đặt phòng: có booking overlap với khoảng thời gian không
         // Bao gồm cả booking active và đã checkout nếu overlap
@@ -362,7 +379,9 @@ const AdminDashboard = () => {
           price: room.price || 0,
           isBooked: isBookedInRange,
           bookingCount: roomBookingsInRange.length,
-          revenue: revenue
+          roomRevenue: roomRevenue,
+          serviceRevenue: serviceRevenue,
+          totalRevenue: roomRevenue + serviceRevenue
         };
       });
 
@@ -611,9 +630,9 @@ const AdminDashboard = () => {
     // Sheet 4: Chi tiết từng phòng
     const roomDetailData = [
       [`CHI TIẾT TỪNG PHÒNG (${formatDate(startDate)} - ${formatDate(endDate)})`],
-      [`Thời gian: ${formatDate(startDate)} - ${formatDate(endDate)} (Tính booking overlap với khoảng thời gian)`],
+      [`Thời gian: ${formatDate(startDate)} - ${formatDate(endDate)} (Chỉ tính booking đã trả phòng - checked_out)`],
       [''],
-      ['Mã phòng', 'Tên phòng', 'Loại phòng', 'Trạng thái', 'Đã đặt', 'Số lượt đặt', 'Giá phòng (VNĐ)', 'Doanh thu (VNĐ)']
+      ['Mã phòng', 'Tên phòng', 'Loại phòng', 'Trạng thái', 'Đã đặt', 'Số lượt đặt', 'Giá phòng (VNĐ)', 'Doanh thu phòng (VNĐ)', 'Doanh thu dịch vụ (VNĐ)', 'Tổng doanh thu (VNĐ)']
     ];
 
     // Hàm chuyển đổi trạng thái phòng sang tiếng Việt
@@ -637,80 +656,29 @@ const AdminDashboard = () => {
         room.isBooked ? 'Có' : 'Không',
         room.bookingCount,
         room.price,
-        room.revenue
+        room.roomRevenue,
+        room.serviceRevenue,
+        room.totalRevenue
       ]);
     });
 
     // Tính tổng
-    const totalRoomRevenue = roomDetails.reduce((sum, r) => sum + (r.revenue || 0), 0);
+    const totalRoomRevenueOnly = roomDetails.reduce((sum, r) => sum + (r.roomRevenue || 0), 0);
+    const totalServiceRevenueOnly = roomDetails.reduce((sum, r) => sum + (r.serviceRevenue || 0), 0);
+    const totalAllRevenue = roomDetails.reduce((sum, r) => sum + (r.totalRevenue || 0), 0);
     const totalBooked = roomDetails.filter(r => r.isBooked).length;
     const totalBookings = roomDetails.reduce((sum, r) => sum + r.bookingCount, 0);
     
-    // Tính tổng doanh thu từ TẤT CẢ transactions (để so sánh)
-    const totalRevenueFromTransactions = transactions.reduce((sum, t) => {
-      const amount = parseFloat(t.amount || 0) || 0;
-      return sum + amount;
-    }, 0);
-    
-    // Sử dụng tổng doanh thu từ stats.revenue (backend API) để đảm bảo nhất quán với tổng quan
-    // Đây là giá trị chính xác từ backend API /statistical/revenue
-    // Nếu có sự khác biệt với totalRevenueFromTransactions, có thể do:
-    // - Backend filter khác với frontend
-    // - Vấn đề về timezone
-    // - Vấn đề về pagination (không lấy hết transactions)
-    const totalRevenueToDisplay = parseFloat(stats.revenue) || totalRevenueFromTransactions;
-    
-    // Kiểm tra transactions không match với room nào
-    const allBookingIds = new Set(bookings.map(b => b.id).filter(id => id != null));
-    
-    // Tính tổng doanh thu từ transactions có booking match với rooms
-    const allMatchedBookingIds = new Set();
-    roomDetails.forEach(room => {
-      const allRoomBookings = bookings.filter(booking => {
-        if (booking.roomCode && room.code && booking.roomCode === room.code) return true;
-        if (booking.roomId && room.id && booking.roomId === room.id) return true;
-        if (booking.roomNumber && room.number && booking.roomNumber === room.number) return true;
-        if (booking.roomCode && room.number && booking.roomCode === room.number) return true;
-        return false;
-      });
-      allRoomBookings.forEach(b => {
-        if (b.id) allMatchedBookingIds.add(b.id);
-      });
-    });
-    
-    const transactionsWithMatchedBookings = transactions.filter(t => {
-      const bookingId = t.bookingDTO?.id || t.bookingId;
-      return bookingId && allMatchedBookingIds.has(bookingId);
-    });
-    
-    const transactionsWithUnmatchedBookings = transactions.filter(t => {
-      const bookingId = t.bookingDTO?.id || t.bookingId;
-      return !bookingId || !allBookingIds.has(bookingId);
-    });
-    
-    const matchedRevenue = transactionsWithMatchedBookings.reduce((sum, t) => {
-      const amount = parseFloat(t.amount || 0) || 0;
-      return sum + amount;
-    }, 0);
-    
-    const unmatchedRevenue = transactionsWithUnmatchedBookings.reduce((sum, t) => {
-      const amount = parseFloat(t.amount || 0) || 0;
-      return sum + amount;
-    }, 0);
-    
-    // Log để debug nếu có sự khác biệt
+    // Log để debug
     console.log('=== DEBUG DOANH THU ===');
+    console.log('Tổng doanh thu phòng:', totalRoomRevenueOnly);
+    console.log('Tổng doanh thu dịch vụ:', totalServiceRevenueOnly);
+    console.log('Tổng doanh thu (phòng + dịch vụ):', totalAllRevenue);
     console.log('Tổng doanh thu từ transactions (tất cả từ backend):', totalRevenueFromTransactions);
     console.log('Tổng doanh thu từ roomDetails (tổng các phòng):', totalRoomRevenue);
     console.log('Tổng doanh thu từ stats (backend API):', stats.revenue);
-    console.log('Doanh thu từ transactions match với rooms:', matchedRevenue);
-    console.log('Doanh thu từ transactions không match với booking:', unmatchedRevenue);
-    console.log('Số transactions:', transactions.length);
-    console.log('Số transactions match với rooms:', transactionsWithMatchedBookings.length);
-    console.log('Số transactions không match với booking:', transactionsWithUnmatchedBookings.length);
     console.log('Số bookings:', bookings.length);
     console.log('Số rooms:', rooms.length);
-    console.log('Số bookings match với rooms:', allMatchedBookingIds.size);
     console.log('========================');
     
     roomDetailData.push(['']);
@@ -722,7 +690,9 @@ const AdminDashboard = () => {
       `${totalBooked}/${roomDetails.length}`,
       totalBookings,
       '',
-      totalRevenueToDisplay  // Sử dụng tổng doanh thu từ tất cả transactions (giống tổng quan)
+      totalRoomRevenueOnly,
+      totalServiceRevenueOnly,
+      totalAllRevenue
     ]);
 
     const ws4 = XLSX.utils.aoa_to_sheet(roomDetailData);
@@ -732,13 +702,15 @@ const AdminDashboard = () => {
       { wch: 20 }, // Loại phòng
       { wch: 15 }, // Trạng thái
       { wch: 12 }, // Đã đặt
-      { wch: 20 }, // Số lượt đặt
+      { wch: 15 }, // Số lượt đặt
       { wch: 20 }, // Giá phòng
-      { wch: 25 }  // Doanh thu
+      { wch: 22 }, // Doanh thu phòng
+      { wch: 22 }, // Doanh thu dịch vụ
+      { wch: 22 }  // Tổng doanh thu
     ];
     ws4['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } }
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 9 } }
     ];
 
     // Đặt chiều cao hàng
@@ -760,6 +732,8 @@ const AdminDashboard = () => {
     applyStyle(ws4, 'F4', headerStyle);
     applyStyle(ws4, 'G4', headerStyle);
     applyStyle(ws4, 'H4', headerStyle);
+    applyStyle(ws4, 'I4', headerStyle);
+    applyStyle(ws4, 'J4', headerStyle);
 
     // Style cho dữ liệu
     for (let i = 0; i < roomDetails.length; i++) {
@@ -772,6 +746,8 @@ const AdminDashboard = () => {
       applyStyle(ws4, `F${row}`, { ...valueStyle, numFmt: '#,##0' });
       applyStyle(ws4, `G${row}`, { ...valueStyle, numFmt: '#,##0' });
       applyStyle(ws4, `H${row}`, { ...valueStyle, numFmt: '#,##0' });
+      applyStyle(ws4, `I${row}`, { ...valueStyle, numFmt: '#,##0' });
+      applyStyle(ws4, `J${row}`, { ...valueStyle, numFmt: '#,##0' });
     }
 
     // Style cho dòng tổng
@@ -784,6 +760,8 @@ const AdminDashboard = () => {
     applyStyle(ws4, `F${totalRoomRow}`, { ...totalStyle, numFmt: '#,##0' });
     applyStyle(ws4, `G${totalRoomRow}`, totalStyle);
     applyStyle(ws4, `H${totalRoomRow}`, { ...totalStyle, numFmt: '#,##0' });
+    applyStyle(ws4, `I${totalRoomRow}`, { ...totalStyle, numFmt: '#,##0' });
+    applyStyle(ws4, `J${totalRoomRow}`, { ...totalStyle, numFmt: '#,##0' });
 
     XLSX.utils.book_append_sheet(wb, ws4, 'Chi tiết phòng');
 
@@ -823,25 +801,61 @@ const AdminDashboard = () => {
       const bookings = bookingsRes?.content || bookingsRes?.data || bookingsRes || [];
       const transactions = transactionsRes?.content || transactionsRes?.data || transactionsRes || [];
 
-      // Lọc booking đã hoàn trả phòng (checked_out)
-      const completedBookings = bookings.filter(b => b.status === 'checked_out');
+      // Tạo khoảng thời gian để filter
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
 
-      // Tính tổng doanh thu dịch vụ từ các booking đã hoàn trả
+      // Lọc booking đã trả phòng (checked_out) trong khoảng thời gian
+      // Chỉ tính booking có ngày trả phòng (checkOut) trong khoảng thời gian
+      const completedBookings = bookings.filter(booking => {
+        if (booking.status !== 'checked_out') return false;
+        if (!booking.checkOut) return false;
+        
+        const checkOutDate = new Date(booking.checkOut);
+        checkOutDate.setHours(0, 0, 0, 0);
+        
+        return checkOutDate >= start && checkOutDate <= end;
+      });
+
+      // Logic tính doanh thu theo 2 trường hợp:
+      // 1. Booking đã trả phòng (checked_out): lấy booking.priceTotal + services
+      // 2. Booking chưa trả nhưng đã thanh toán (transaction.status = success): lấy transaction.amount
+      
+      let totalRoomRevenue = 0;
       let totalServiceRevenue = 0;
+      
+      // Lưu danh sách booking ID đã trả phòng để loại trừ
+      const completedBookingIds = new Set();
+      
+      // 1. Doanh thu từ booking đã trả phòng
       completedBookings.forEach(booking => {
+        completedBookingIds.add(booking.id);
+        
+        // Doanh thu phòng
+        const roomPrice = parseFloat(booking.priceTotal || 0) || 0;
+        totalRoomRevenue += roomPrice;
+        
+        // Doanh thu dịch vụ
         if (booking.bookingServices && Array.isArray(booking.bookingServices)) {
           booking.bookingServices.forEach(service => {
-            const serviceAmount = parseFloat(service.price || 0) * parseInt(service.quantity || 0);
+            const serviceAmount = parseFloat(service.totalPrice || 0) || 0;
             totalServiceRevenue += serviceAmount;
           });
         }
       });
-
-      // Tính tổng doanh thu phòng từ transactions
-      const totalRoomRevenue = transactions.reduce((sum, t) => {
-        const amount = parseFloat(t.amount || 0) || 0;
-        return sum + amount;
-      }, 0);
+      
+      // 2. Doanh thu từ booking chưa trả nhưng đã thanh toán (transactions)
+      // Loại trừ transactions của booking đã trả phòng
+      transactions.forEach(t => {
+        const bookingId = t.bookingDTO?.id || t.bookingId;
+        // Chỉ tính nếu booking chưa trả phòng
+        if (bookingId && !completedBookingIds.has(bookingId)) {
+          const amount = parseFloat(t.amount || 0) || 0;
+          totalRoomRevenue += amount;
+        }
+      });
 
       // Khởi tạo dữ liệu VAT (khoản chi sẽ được nhập sau)
       const vatData = {
@@ -939,7 +953,7 @@ const AdminDashboard = () => {
             </div>
           </div>
           
-        <button
+        {/* <button
           onClick={exportToExcel}
           disabled={exporting}
           className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-semibold transition-all duration-300 flex items-center gap-2 shadow-lg"
@@ -955,7 +969,7 @@ const AdminDashboard = () => {
               Xuất Excel
             </>
           )}
-        </button>
+        </button> */}
         
         <button
           onClick={calculateVATData}
@@ -970,7 +984,7 @@ const AdminDashboard = () => {
           ) : (
             <>
               <i className="fas fa-file-invoice-dollar"></i>
-              Xuất File Thuế
+              Xuất VAT
             </>
           )}
         </button>
@@ -1142,7 +1156,7 @@ const AdminDashboard = () => {
           loading={loading}
         />
         <StatCard
-          title="Doanh thu 30 ngày (VNĐ)"
+          title="Doanh thu (VNĐ)"
           value={`${formatRevenue(stats.revenue)}M`}
           icon="fa-money-bill-wave"
           color={{ bg: 'bg-rose-100', text: 'text-rose-500' }}
@@ -1347,5 +1361,3 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
-export
- default AdminDashboard;

@@ -33,4 +33,7 @@ public class BookingDTO {
     private Long userId;
     private String userEmail;
     private String userFullName;
+    
+    // Danh sách dịch vụ kèm theo
+    private java.util.List<BookingServiceDTO> bookingServices;
 }

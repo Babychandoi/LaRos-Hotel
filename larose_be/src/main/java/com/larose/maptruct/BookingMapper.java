@@ -6,7 +6,7 @@ import com.larose.entity.Booking;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
-@Mapper(componentModel = "spring")
+@Mapper(componentModel = "spring", uses = {BookingServiceMapper.class})
 public interface BookingMapper {
     Booking toBooking(BookingDTO bookingDTO);
 
@@ -18,5 +18,6 @@ public interface BookingMapper {
     @Mapping(target = "userEmail", source = "user.email")
     @Mapping(target = "userFullName", source = "user.fullName")
     @Mapping(target = "userId", source = "user.id")
+    @Mapping(target = "bookingServices", source = "bookingServices")
     BookingDTO toBookingDTO(Booking booking);
 }

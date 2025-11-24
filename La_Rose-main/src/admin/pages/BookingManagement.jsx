@@ -186,7 +186,7 @@ const BookingManagement = () => {
                     <th scope="col" className="px-6 py-3">Số đêm</th>
                     <th scope="col" className="px-6 py-3">Tổng tiền</th>
                     <th scope="col" className="px-6 py-3 text-center">Trạng thái</th>
-                    <th scope="col" className="px-6 py-3 text-center">Thao tác</th>
+                    <th scope="col" className="px-6 py-3">Thao tác</th>
                 </tr>
              </thead>
              <tbody>
@@ -237,7 +237,7 @@ const BookingManagement = () => {
                                 )}
                             </td>
                             <td className="px-6 py-4">
-                                <div className="flex gap-2 items-center justify-center">
+                                <div className="flex gap-2 items-center">
                                     <button 
                                         onClick={() => handleViewDetail(booking)} 
                                         className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 transition-colors border-0 bg-transparent px-2 py-1 whitespace-nowrap"
