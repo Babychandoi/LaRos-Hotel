@@ -1,128 +1,38 @@
 import HttpService from "../../services/http.service";
 
-class BookingService extends HttpService {
-    constructor() {
-        super("http://localhost:8080/api");
+/** Quản lý đơn đặt phòng và giao dịch (ADMIN). */
+class AdminBookingService extends HttpService {
+    /** params: { page, size, sortBy, sortDirection, status, search } -> Page<BookingDTO>. */
+    getAllBookings(params = {}) {
+        return this.get("/api/admin/bookings", { params });
     }
 
-    async getAllBookings(params = {}) {
-        try {
-            const queryString = new URLSearchParams(params).toString();
-            const response = await this.get(`/admin/bookings?${queryString}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getAllBookings:", error);
-            throw error;
-        }
+    getBookingById(bookingId) {
+        return this.get(`/api/admin/bookings/${bookingId}`);
     }
 
-    async getHistoryBookings(params = {}) {
-        try {
-            const queryString = new URLSearchParams(params).toString();
-            const response = await this.get(`/users/bookings/status?${queryString}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getAllBookings:", error);
-            throw error;
-        }
+    /** status: pending | confirmed | checked_in | checked_out | cancelled | no_show */
+    updateBookingStatus(bookingId, status) {
+        return this.put(`/api/admin/bookings/${bookingId}/status`, null, { params: { status } });
     }
 
-
-    async getBookingById(bookingId) {
-        try {
-            const response = await this.get(`/admin/bookings/${bookingId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getBookingById:", error);
-            throw error;
-        }
+    cancelBooking(bookingId, reason = "") {
+        return this.put(`/api/admin/bookings/${bookingId}/cancel`, null, { params: { reason } });
     }
 
-    async updateBookingStatus(bookingId, status) {
-        try {
-            const response = await this.put(
-                `/admin/bookings/${bookingId}/status?status=${status}`,
-            );
-            return response;
-        } catch (error) {
-            console.error("Error in updateBookingStatus:", error);
-            throw error;
-        }
+    getTransaction(bookingId) {
+        return this.get(`/api/transaction/${bookingId}`);
     }
 
-    async cancelBooking(bookingId, reason = "") {
-        try {
-            const response = await this.put(
-                `/admin/bookings/${bookingId}/cancel?reason=${encodeURIComponent(reason)}`,
-            );
-            return response;
-        } catch (error) {
-            console.error("Error in cancelBooking:", error);
-            throw error;
-        }
+    /** params: { page, size, sortBy, sortDirection, status, provider, startDate, endDate } -> Page<TransactionResponse>. */
+    getAllTransactions(params = {}) {
+        return this.get("/api/admin/transactions", { params });
     }
 
-    async cancelUserBooking(bookingId) {
-        try {
-            const response = await this.put(`/booking/cancel/${bookingId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in cancelUserBooking:", error);
-            throw error;
-        }
-    }
-
-    async getTransaction(bookingId) {
-        try {
-            const response = await this.get(`/transaction/${bookingId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getTransaction:", error);
-            throw error;
-        }
-    }
-
-    async getAllTransactions(params = {}) {
-        try {
-            const queryString = new URLSearchParams(params).toString();
-            const response = await this.get(`/admin/transactions?${queryString}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getAllTransactions:", error);
-            throw error;
-        }
-    }
-
-    async updateTransactionStatus(transactionId, status) {
-        try {
-            // Thử endpoint admin trước
-            try {
-                const response = await this.put(
-                    `/admin/transactions/${transactionId}/status?status=${status}`,
-                );
-                return response;
-            } catch (adminError) {
-                // Nếu không có endpoint admin, thử endpoint transaction thông thường
-                try {
-                    const response = await this.put(
-                        `/transaction/${transactionId}/status?status=${status}`,
-                    );
-                    return response;
-                } catch (transactionError) {
-                    // Nếu cả hai đều không có, thử PUT với body
-                    const response = await this.put(
-                        `/transaction/${transactionId}`,
-                        { status: status }
-                    );
-                    return response;
-                }
-            }
-        } catch (error) {
-            console.error("Error in updateTransactionStatus:", error);
-            throw error;
-        }
+    /** status: initiated | success | failed | refunded */
+    updateTransactionStatus(transactionId, status) {
+        return this.put(`/api/admin/transactions/${transactionId}/status`, null, { params: { status } });
     }
 }
 
-export default new BookingService();
-
+export default new AdminBookingService();

@@ -1,16 +1,36 @@
 package com.larose.controller.admin;
 
-import com.larose.dto.*;
+import com.larose.dto.AdminUpdateUserRequest;
+import com.larose.dto.AssignRoleRequest;
+import com.larose.dto.BookingDTO;
+import com.larose.dto.CreateUserRequest;
+import com.larose.dto.ReviewDTO;
+import com.larose.dto.UserDTO;
+import com.larose.dto.UserDetailDTO;
+import com.larose.dto.UserStatsDTO;
+import com.larose.dto.response.TransactionResponse;
 import com.larose.service.AdminUserService;
+import com.larose.service.BookingService;
+import com.larose.service.ReviewService;
+import com.larose.service.TransactionService;
+import com.larose.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
@@ -21,10 +41,11 @@ import java.util.List;
 public class AdminUserController {
 
     private final AdminUserService adminUserService;
+    private final UserService userService;
+    private final BookingService bookingService;
+    private final TransactionService transactionService;
+    private final ReviewService reviewService;
 
-    /**
-     * Lấy danh sách users với phân trang và lọc
-     */
     @GetMapping
     public ResponseEntity<Page<UserDTO>> getUsers(
             @RequestParam(defaultValue = "0") int page,
@@ -35,101 +56,74 @@ public class AdminUserController {
             @RequestParam(required = false) Boolean isActive,
             @RequestParam(required = false) Boolean emailVerified,
             @RequestParam(required = false) String role) {
-
-        Sort sort = Sort.by(Sort.Direction.fromString(sortDirection), sortBy);
-        Pageable pageable = PageRequest.of(page, size, sort);
-
-        Page<UserDTO> users = adminUserService.getUsersWithFilters(search, isActive, emailVerified, role, pageable);
-        return ResponseEntity.ok(users);
+        PageRequest pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.fromString(sortDirection), sortBy));
+        return ResponseEntity.ok(adminUserService.getUsersWithFilters(search, isActive, emailVerified, role, pageable));
     }
 
-    /**
-     * Lấy chi tiết user
-     */
+    @PostMapping
+    public ResponseEntity<UserDTO> createUser(@Valid @RequestBody CreateUserRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.createUser(request));
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<UserStatsDTO> getUserStats() {
+        return ResponseEntity.ok(adminUserService.getUserStats());
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<UserDetailDTO> getUserById(@PathVariable Long id) {
-        UserDetailDTO user = adminUserService.getUserById(id);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.getUserById(id));
     }
 
-    /**
-     * Cập nhật user
-     */
     @PutMapping("/{id}")
     public ResponseEntity<UserDTO> updateUser(@PathVariable Long id, @Valid @RequestBody AdminUpdateUserRequest request) {
-        UserDTO updatedUser = adminUserService.updateUser(id, request);
-        return ResponseEntity.ok(updatedUser);
+        return ResponseEntity.ok(adminUserService.updateUser(id, request));
     }
 
-    /**
-     * Xóa user (soft delete)
-     */
+    /** Xoá mềm: đặt deleted_at và vô hiệu hoá tài khoản. */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
         adminUserService.softDeleteUser(id);
         return ResponseEntity.noContent().build();
     }
 
-    /**
-     * Gán role cho user
-     */
     @PostMapping("/{id}/roles")
     public ResponseEntity<UserDTO> assignRoleToUser(@PathVariable Long id, @Valid @RequestBody AssignRoleRequest request) {
-        UserDTO user = adminUserService.assignRoleToUser(id, request.getRoleName());
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.assignRoleToUser(id, request.getRoleName()));
     }
 
-    /**
-     * Xóa role của user
-     */
     @DeleteMapping("/{id}/roles/{roleName}")
     public ResponseEntity<UserDTO> removeRoleFromUser(@PathVariable Long id, @PathVariable String roleName) {
-        UserDTO user = adminUserService.removeRoleFromUser(id, roleName);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.removeRoleFromUser(id, roleName));
     }
 
-    /**
-     * Kích hoạt user
-     */
     @PostMapping("/{id}/activate")
     public ResponseEntity<UserDTO> activateUser(@PathVariable Long id) {
-        UserDTO user = adminUserService.activateUser(id);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.activateUser(id));
     }
 
-    /**
-     * Vô hiệu hóa user
-     */
     @PostMapping("/{id}/deactivate")
     public ResponseEntity<UserDTO> deactivateUser(@PathVariable Long id) {
-        UserDTO user = adminUserService.deactivateUser(id);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.deactivateUser(id));
     }
 
-    /**
-     * Khôi phục user đã xóa
-     */
     @PostMapping("/{id}/restore")
     public ResponseEntity<UserDTO> restoreUser(@PathVariable Long id) {
-        UserDTO user = adminUserService.restoreUser(id);
-        return ResponseEntity.ok(user);
+        return ResponseEntity.ok(adminUserService.restoreUser(id));
     }
 
-    /**
-     * Lấy thống kê users
-     */
-    @GetMapping("/stats")
-    public ResponseEntity<UserStatsDTO> getUserStats() {
-        UserStatsDTO stats = adminUserService.getUserStats();
-        return ResponseEntity.ok(stats);
+    @GetMapping("/{id}/bookings")
+    public ResponseEntity<List<BookingDTO>> getUserBookings(@PathVariable Long id) {
+        return ResponseEntity.ok(bookingService.getBookingsByUserId(id));
     }
 
-    /**
-     * Lấy lịch sử đăng nhập của user
-     */
-    @GetMapping("/{id}/login-history")
-    public ResponseEntity<List<LoginHistoryDTO>> getUserLoginHistory(@PathVariable Long id) {
-        List<LoginHistoryDTO> history = adminUserService.getUserLoginHistory(id);
-        return ResponseEntity.ok(history);
+    @GetMapping("/{id}/transactions")
+    public ResponseEntity<List<TransactionResponse>> getUserTransactions(@PathVariable Long id) {
+        return ResponseEntity.ok(transactionService.getTransactionsByUserId(id));
+    }
+
+    @GetMapping("/{id}/reviews")
+    public ResponseEntity<List<ReviewDTO>> getUserReviews(@PathVariable Long id) {
+        return ResponseEntity.ok(reviewService.getReviewsByUserId(id));
     }
 }

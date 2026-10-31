@@ -11,8 +11,10 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.text.NumberFormat;
@@ -23,34 +25,22 @@ import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class VATReportService {
     private final BookingRepository bookingRepository;
     private final TransactionRepository transactionRepository;
     private static final BigDecimal VAT_RATE = new BigDecimal("0.10"); // 10%
-    private static final BigDecimal EXPENSE_RATE = new BigDecimal("0.30"); // 30% doanh thu làm khoản chi
 
-    public byte[] generateVATReport(LocalDate startDate, LocalDate endDate, BigDecimal khoanchi) throws Exception {
-        // Tính toán dữ liệu
+    public byte[] generateVATReport(LocalDate startDate, LocalDate endDate, BigDecimal khoanchi) throws IOException {
         VATData vatData = calculateVATData(startDate, endDate, khoanchi);
-
-        // Load template từ resources (file gốc không bị thay đổi)
-        ClassPathResource resource = new ClassPathResource("report/vat_report.docx");
-        InputStream templateStream = resource.getInputStream();
-        
-        // Tạo document trong bộ nhớ từ template
-        XWPFDocument document = new XWPFDocument(templateStream);
-
-        // Thay thế các placeholder
-        replacePlaceholders(document, vatData);
-
-        // Chuyển document thành byte array để trả về
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        document.write(outputStream);
-        document.close();
-        templateStream.close();
-
-        // Trả về file đã điền dữ liệu (file gốc vẫn giữ nguyên)
-        return outputStream.toByteArray();
+        // Đọc template từ resources và điền dữ liệu trong bộ nhớ (file gốc không bị thay đổi)
+        try (InputStream templateStream = new ClassPathResource("report/vat_report.docx").getInputStream();
+             XWPFDocument document = new XWPFDocument(templateStream);
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+            replacePlaceholders(document, vatData);
+            document.write(outputStream);
+            return outputStream.toByteArray();
+        }
     }
 
     private VATData calculateVATData(LocalDate startDate, LocalDate endDate, BigDecimal khoanchi) {

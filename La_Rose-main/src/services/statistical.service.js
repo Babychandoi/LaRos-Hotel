@@ -1,59 +1,47 @@
-// /src/services/statistical.service.js
 import HttpService from "./http.service";
 
+/**
+ * Thống kê cho dashboard quản trị (yêu cầu quyền ADMIN).
+ * Doanh thu: truyền (startDate, endDate) dạng YYYY-MM-DD, hoặc chỉ `days` (N ngày gần nhất).
+ */
 class StatisticalService {
     constructor() {
-        this.httpService = new HttpService("http://localhost:8080");
+        this.httpService = new HttpService();
         this.basePath = "/api/statistical";
     }
 
-    async getTotalRooms() {
-        return await this.httpService.get(`${this.basePath}/rooms/total`, { skipAuth: true });
+    getTotalRooms() {
+        return this.httpService.get(`${this.basePath}/rooms/total`);
     }
 
-    async getBookedRooms(minDate, maxDate) {
-        let url = `${this.basePath}/rooms/booked`;
-        const params = new URLSearchParams();
-        if (minDate) params.append("minDate", minDate);
-        if (maxDate) params.append("maxDate", maxDate);
-        if (params.toString()) url += `?${params.toString()}`;
-        return await this.httpService.get(url, { skipAuth: true });
+    getBookedRooms(minDate, maxDate) {
+        return this.httpService.get(`${this.basePath}/rooms/booked`, { params: compact({ minDate, maxDate }) });
     }
 
-    async getRevenue(days = 7, startDate = null, endDate = null) {
-        const params = new URLSearchParams();
-        if (startDate && endDate) {
-            params.append("startDate", startDate);
-            params.append("endDate", endDate);
-        } else if (days) {
-            params.append("days", days);
-        }
-        const url = params.toString() ? `${this.basePath}/revenue?${params.toString()}` : `${this.basePath}/revenue`;
-        return await this.httpService.get(url, { skipAuth: true });
+    getRevenue(days = 7, startDate = null, endDate = null) {
+        return this.httpService.get(`${this.basePath}/revenue`, { params: periodParams(days, startDate, endDate) });
     }
 
-    // === THÊM MỚI ===
-    async getDailyRevenue(days = 7, startDate = null, endDate = null) {
-        const params = new URLSearchParams();
-        if (startDate && endDate) {
-            params.append("startDate", startDate);
-            params.append("endDate", endDate);
-        } else if (days) {
-            params.append("days", days);
-        }
-        const url = params.toString() ? `${this.basePath}/revenue/daily?${params.toString()}` : `${this.basePath}/revenue/daily`;
-        return await this.httpService.get(url, { skipAuth: true });
+    /** [{ date, revenue }] — tổng các phần tử bằng đúng getRevenue cùng tham số. */
+    getDailyRevenue(days = 7, startDate = null, endDate = null) {
+        return this.httpService.get(`${this.basePath}/revenue/daily`, { params: periodParams(days, startDate, endDate) });
     }
 
-    async getWeeklyRevenue(weeks = 12) {
-        return await this.httpService.get(`${this.basePath}/revenue/weekly?weeks=${weeks}`, { skipAuth: true });
+    /** [{ weekNumber (YYYYWW), startDate, endDate, revenue }] cho N tuần gần nhất. */
+    getWeeklyRevenue(weeks = 12) {
+        return this.httpService.get(`${this.basePath}/revenue/weekly`, { params: { weeks } });
     }
 
-    async getOccupancyRate(minDate, maxDate) {
-        const params = new URLSearchParams({ minDate, maxDate });
-        return await this.httpService.get(`${this.basePath}/occupancy-rate?${params.toString()}`, { skipAuth: true });
+    getOccupancyRate(minDate, maxDate) {
+        return this.httpService.get(`${this.basePath}/occupancy-rate`, { params: { minDate, maxDate } });
     }
 }
+
+const compact = (params) =>
+    Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+
+const periodParams = (days, startDate, endDate) =>
+    startDate && endDate ? { startDate, endDate } : compact({ days });
 
 const statisticalService = new StatisticalService();
 export default statisticalService;

@@ -1,98 +1,35 @@
 import HttpService from "../../services/http.service";
 
-class ReviewService extends HttpService {
-    constructor() {
-        super("http://localhost:8080/api");
+/** Duyệt và phản hồi đánh giá (ADMIN). */
+class AdminReviewService extends HttpService {
+    /** params: { page, size, status: published | pending | hidden } -> Page<ReviewDTO>. */
+    getAllReviews(params = {}) {
+        return this.get("/api/reviews/admin", { params });
     }
 
-    async getAllReviews(params = {}) {
-        try {
-            const queryString = new URLSearchParams(params).toString();
-            const response = await this.get(`/reviews/admin?${queryString}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getAllReviews:", error);
-            throw error;
-        }
+    getReviewById(reviewId) {
+        return this.get(`/api/reviews/${reviewId}`);
     }
 
-    async getReviewById(reviewId) {
-        try {
-            const response = await this.get(`/reviews/${reviewId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in getReviewById:", error);
-            throw error;
-        }
+    updateReviewStatus(reviewId, status) {
+        return this.put(`/api/reviews/${reviewId}/status`, null, { params: { status } });
     }
 
-    async updateReview(reviewId, reviewData) {
-        try {
-            const response = await this.put(`/reviews`, reviewData);
-            return response;
-        } catch (error) {
-            console.error("Error in updateReview:", error);
-            throw error;
-        }
+    deleteReview(reviewId) {
+        return this.delete(`/api/reviews/${reviewId}`);
     }
 
-    async updateReviewStatus(reviewId, status) {
-        try {
-            const response = await this.put(`/reviews/${reviewId}/status?status=${status}`);
-            return response;
-        } catch (error) {
-            console.error("Error in updateReviewStatus:", error);
-            throw error;
-        }
+    createResponse(reviewId, content) {
+        return this.post("/api/reviews/response", { reviewId, content });
     }
 
-    async deleteReview(reviewId) {
-        try {
-            const response = await this.delete(`/reviews/${reviewId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in deleteReview:", error);
-            throw error;
-        }
+    updateResponse(responseId, content) {
+        return this.put("/api/reviews/response", { id: responseId, content });
     }
 
-    // Response methods
-    async createResponse(reviewId, content) {
-        try {
-            const response = await this.post(`/reviews/response`, {
-                reviewId: reviewId,
-                content: content
-            });
-            return response;
-        } catch (error) {
-            console.error("Error in createResponse:", error);
-            throw error;
-        }
-    }
-
-    async updateResponse(responseId, content) {
-        try {
-            const response = await this.put(`/reviews/response`, {
-                id: responseId,
-                content: content
-            });
-            return response;
-        } catch (error) {
-            console.error("Error in updateResponse:", error);
-            throw error;
-        }
-    }
-
-    async deleteResponse(responseId) {
-        try {
-            const response = await this.delete(`/reviews/response/${responseId}`);
-            return response;
-        } catch (error) {
-            console.error("Error in deleteResponse:", error);
-            throw error;
-        }
+    deleteResponse(responseId) {
+        return this.delete(`/api/reviews/response/${responseId}`);
     }
 }
 
-export default new ReviewService();
-
+export default new AdminReviewService();

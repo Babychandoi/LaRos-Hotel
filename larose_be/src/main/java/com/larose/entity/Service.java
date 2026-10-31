@@ -53,7 +53,7 @@ public class Service {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @OneToMany(mappedBy = "service", cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "service")
     private List<BookingService> bookingServices;
 
     public enum ServiceCategory {

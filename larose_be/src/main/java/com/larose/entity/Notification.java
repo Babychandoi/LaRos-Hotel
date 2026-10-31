@@ -32,7 +32,7 @@ public class Notification {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private NotificationStatus status = NotificationStatus.QUEUED;
+    private NotificationStatus status = NotificationStatus.queued;
 
     @Column(name = "sent_at")
     private LocalDateTime sentAt;
@@ -48,10 +48,10 @@ public class Notification {
     private LocalDateTime createdAt;
 
     public enum NotificationType {
-        EMAIL, SMS, PUSH, SYSTEM
+        email, sms, push, system
     }
 
     public enum NotificationStatus {
-        QUEUED, SENT, FAILED
+        queued, sent, failed
     }
 }

@@ -2,6 +2,7 @@ package com.larose.dto;
 
 import lombok.Data;
 import java.math.BigDecimal;
+import java.util.Map;
 
 @Data
 public class BookingQRRequest {
@@ -16,7 +17,8 @@ public class BookingQRRequest {
     private BigDecimal amountToPay;
     private BigDecimal remainingDue;
     private String paymentOption;
-    private String customerEmail; // Email để gửi thông tin
-    private String createdAt; // Ngày tạo booking
+    private String customerEmail;
+    private String createdAt;
+    /** Toàn bộ tham số vnp_* VNPay trả về qua return URL (bắt buộc khi paymentMethod = vnpay, dùng để kiểm chữ ký). */
+    private Map<String, String> vnpParams;
 }
-

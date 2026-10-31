@@ -1,91 +1,107 @@
-import axios from "axios";
-const API_BASE_URL = "http://localhost:8080/api";
+import HttpService from "./http.service";
+import session from "../utils/SessionManager";
+
+const http = new HttpService();
+
+// Ném Error mang thông điệp của BE (JSX đọc error.message), vẫn giữ error.response để xử lý chi tiết.
+const rethrow = (error, fallback) => {
+    const data = error?.response?.data;
+    const message = (typeof data === "string" && data) || data?.message || fallback;
+    const wrapped = new Error(message);
+    wrapped.response = error?.response;
+    throw wrapped;
+};
 
 class AuthService {
     async signup(userData) {
         try {
-            const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(userData),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || "Đăng ký thất bại");
-            }
-
-            return await response.json();
+            return await http.post("/api/auth/signup", userData, { skipAuth: !session.getToken() });
         } catch (error) {
-            console.error("Signup error:", error);
-            throw error;
+            return rethrow(error, "Đăng ký thất bại");
         }
     }
 
+    /** Đăng nhập và lưu phiên (token + userInfo) vào SessionManager. */
     async login(credentials) {
         try {
-            const response = await fetch(`${API_BASE_URL}/auth/login`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(credentials),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || "Đăng nhập thất bại");
+            const data = await http.post("/api/auth/login", credentials, { skipAuth: true });
+            if (data?.accessToken) {
+                session.saveAuth(data.accessToken);
+                session.saveUser(data.userInfo);
             }
-
-            const data = await response.json();
-
-            // Lưu token vào localStorage
-            if (data.accessToken) {
-                localStorage.setItem("accessToken", data.accessToken);
-                localStorage.setItem("refreshToken", data.refreshToken);
-                localStorage.setItem("userInfo", JSON.stringify(data.userInfo));
-            }
-
             return data;
         } catch (error) {
-            console.error("Login error:", error);
-            throw error;
+            return rethrow(error, "Đăng nhập thất bại");
         }
     }
 
     logout() {
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-        localStorage.removeItem("userInfo");
+        session.logout();
     }
 
     getCurrentUser() {
-        const userInfo = localStorage.getItem("userInfo");
-        return userInfo ? JSON.parse(userInfo) : null;
+        return session.getUser();
     }
 
     getAccessToken() {
-        return localStorage.getItem("accessToken");
+        return session.getToken();
     }
 
     isAuthenticated() {
-        return !!this.getAccessToken();
+        return session.isLoggedIn();
     }
 
+    /** Trả về axios response (status 200, data.message); token sai/hết hạn -> ném lỗi. */
     async verifyEmail(token) {
         try {
-            const response = await axios.get(
-                `http://localhost:8080/api/auth/verify?token=${token}`,
-                {
-                    timeout: 10000,
-                },
-            );
-            return response;
+            return await http.instance.get("/api/auth/verify", { params: { token }, skipAuth: true });
         } catch (error) {
-            console.error("AuthService verifyEmail error:", error);
-            return null;
+            return rethrow(error, "Xác thực email thất bại");
+        }
+    }
+
+    /**
+     * Cập nhật hồ sơ người dùng đang đăng nhập.
+     * @param {{fullName?: string, phone?: string}} profileData
+     * @returns {Promise<object>} UserDTO kèm `userInfo` (thông tin phiên đã gộp hồ sơ mới).
+     */
+    async updateProfile(profileData) {
+        try {
+            const profile = await http.put("/api/users/profile", {
+                fullName: profileData?.fullName,
+                phone: profileData?.phone,
+            });
+            const userInfo = { ...(session.getUser() || {}), fullName: profile.fullName, phone: profile.phone };
+            session.saveUser(userInfo);
+            return { ...profile, userInfo };
+        } catch (error) {
+            return rethrow(error, "Cập nhật thông tin thất bại");
+        }
+    }
+
+    /** @param {{currentPassword: string, newPassword: string}} passwordData */
+    async changePassword({ currentPassword, newPassword }) {
+        try {
+            return await http.post("/api/users/change-password", { currentPassword, newPassword });
+        } catch (error) {
+            return rethrow(error, "Đổi mật khẩu thất bại");
+        }
+    }
+
+    /** Luôn thành công (BE không tiết lộ email có tồn tại hay không). */
+    async forgotPassword(email) {
+        try {
+            return await http.post("/api/auth/forgot-password", { email }, { skipAuth: true });
+        } catch (error) {
+            return rethrow(error, "Không gửi được yêu cầu đặt lại mật khẩu");
+        }
+    }
+
+    async resetPassword(token, newPassword) {
+        try {
+            return await http.post("/api/auth/reset-password", { token, newPassword }, { skipAuth: true });
+        } catch (error) {
+            return rethrow(error, "Đặt lại mật khẩu thất bại");
         }
     }
 }

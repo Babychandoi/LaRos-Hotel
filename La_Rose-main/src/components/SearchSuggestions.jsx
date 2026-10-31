@@ -1,104 +1,33 @@
-import React, { useState } from "react";
-import { Clock, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
-/**
- * SearchSuggestions Component
- * Displays personalized search suggestions based on user's booking history
- * 
- * @param {Array} suggestions - Array of suggestion objects
- * @param {Function} onSuggestionClick - Callback when a suggestion is clicked
- * @param {Boolean} loading - Loading state
- */
-const SearchSuggestions = ({ suggestions = [], onSuggestionClick, loading = false }) => {
-    const [hoveredId, setHoveredId] = useState(null);
+const formatDate = (value) =>
+    value ? new Date(value).toLocaleDateString("vi-VN", { day: "numeric", month: "long", year: "numeric" }) : "";
 
-    if (loading) {
-        return (
-            <div className="mb-6">
-                <div className="flex items-center gap-2 mb-3">
-                    <Sparkles className="w-5 h-5 text-rose-600" />
-                    <h3 className="text-sm font-medium text-gray-700">Gợi ý cho bạn</h3>
-                </div>
-                <div className="flex gap-2 overflow-x-auto pb-2">
-                    {[1, 2, 3, 4, 5].map((i) => (
-                        <div
-                            key={i}
-                            className="flex-shrink-0 h-10 w-32 bg-gray-200 rounded-lg animate-pulse"
-                        />
-                    ))}
-                </div>
-            </div>
-        );
-    }
-
-    if (!suggestions || suggestions.length === 0) {
-        return null;
-    }
-
-    const formatDate = (dateString) => {
-        if (!dateString) return "";
-        const date = new Date(dateString);
-        return date.toLocaleDateString("vi-VN", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-        });
-    };
+/** Gợi ý tìm kiếm cá nhân hoá (dựa trên lịch sử đặt phòng) hiển thị dạng chip. */
+const SearchSuggestions = ({ suggestions = [], onSuggestionClick }) => {
+    if (suggestions.length === 0) return null;
 
     return (
-        <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-                <Sparkles className="w-5 h-5 text-rose-600" />
-                <h3 className="text-sm font-medium text-gray-700">Gợi ý cho bạn</h3>
+        <div>
+            <div className="mb-3 flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-rose-500" />
+                <h2 className="text-sm font-semibold text-slate-700">Gợi ý cho bạn</h2>
             </div>
-            
-            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-                {suggestions.map((suggestion) => (
-                    <div
-                        key={suggestion.id}
-                        className="relative flex-shrink-0"
-                        onMouseEnter={() => setHoveredId(suggestion.id)}
-                        onMouseLeave={() => setHoveredId(null)}
+            <div className="flex gap-2 overflow-x-auto pb-1">
+                {suggestions.map((s) => (
+                    <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => onSuggestionClick(s)}
+                        title={s.lastBookedDate ? `Lần đặt gần nhất: ${formatDate(s.lastBookedDate)}` : undefined}
+                        className="flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/30"
                     >
-                        <button
-                            onClick={() => onSuggestionClick(suggestion)}
-                            className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-rose-50 
-                                     border border-gray-200 hover:border-rose-300 rounded-lg 
-                                     transition-all duration-200 group focus:outline-none 
-                                     focus:ring-2 focus:ring-rose-500 focus:ring-offset-1"
-                        >
-                            <span className="text-sm font-medium text-gray-700 group-hover:text-rose-700 whitespace-nowrap">
-                                {suggestion.label}
-                            </span>
-                            
-                            {suggestion.isPreviouslyBooked && (
-                                <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-xs font-medium rounded-full">
-                                    Đã đặt
-                                </span>
-                            )}
-                            
-                            {suggestion.count > 1 && (
-                                <span className="text-xs text-gray-500">
-                                    ({suggestion.count})
-                                </span>
-                            )}
-                        </button>
-
-                        {/* Tooltip */}
-                        {hoveredId === suggestion.id && suggestion.lastBookedDate && (
-                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 
-                                          px-3 py-2 bg-gray-900 text-white text-xs rounded-lg 
-                                          whitespace-nowrap z-10 shadow-lg">
-                                <div className="flex items-center gap-1.5">
-                                    <Clock className="w-3 h-3" />
-                                    <span>Lần cuối: {formatDate(suggestion.lastBookedDate)}</span>
-                                </div>
-                                {/* Arrow */}
-                                <div className="absolute top-full left-1/2 transform -translate-x-1/2 
-                                              border-4 border-transparent border-t-gray-900" />
-                            </div>
+                        <span className="whitespace-nowrap">{s.label}</span>
+                        {s.isPreviouslyBooked && (
+                            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">Đã đặt</span>
                         )}
-                    </div>
+                        {s.count > 1 && <span className="text-xs text-slate-400">({s.count})</span>}
+                    </button>
                 ))}
             </div>
         </div>

@@ -39,6 +39,6 @@ public class NotificationTemplate {
     private LocalDateTime updatedAt;
 
     public enum Channel {
-        EMAIL, SMS
+        email, sms
     }
 }

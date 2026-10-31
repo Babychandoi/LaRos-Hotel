@@ -1,157 +1,113 @@
-import { useState, useEffect, useRef } from "react";
-import { Search, Clock, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clock, Search, X } from "lucide-react";
+
+const HISTORY_KEY = "roomSearchHistory";
+const MAX_HISTORY = 10;
+const MAX_VISIBLE = 5;
+
+const readHistory = () => {
+    try {
+        return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    } catch {
+        return [];
+    }
+};
+
+const writeHistory = (history) => {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    return history;
+};
 
 /**
- * SearchAutocomplete Component
- * Displays search history from localStorage in dropdown
+ * Ô tìm kiếm phòng kèm lịch sử tìm kiếm (lưu ở localStorage).
+ * Chọn một mục lịch sử sẽ gọi onSelect({ type: "history", label }).
  */
-const SearchAutocomplete = ({ 
-    value, 
-    onChange, 
-    onSelect,
-    placeholder = "Tìm kiếm...",
-    name = "search"
-}) => {
+const SearchAutocomplete = ({ id, value, onChange, onSelect, placeholder = "Tìm kiếm...", name = "search" }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const [searchHistory, setSearchHistory] = useState([]);
-    const [filteredHistory, setFilteredHistory] = useState([]);
+    const [history, setHistory] = useState(readHistory);
     const wrapperRef = useRef(null);
-    const inputRef = useRef(null);
 
-    // Load search history from localStorage
-    useEffect(() => {
-        const history = JSON.parse(localStorage.getItem('roomSearchHistory') || '[]');
-        setSearchHistory(history);
-    }, []);
+    const visibleHistory = useMemo(() => {
+        const keyword = value?.trim().toLowerCase();
+        const list = keyword ? history.filter((term) => term.toLowerCase().includes(keyword)) : history;
+        return list.slice(0, MAX_VISIBLE);
+    }, [history, value]);
 
-    // Filter history based on input value
     useEffect(() => {
-        if (!value || value.length < 1) {
-            setFilteredHistory(searchHistory.slice(0, 5));
-        } else {
-            const searchLower = value.toLowerCase();
-            const matches = searchHistory
-                .filter(term => term.toLowerCase().includes(searchLower))
-                .slice(0, 5);
-            setFilteredHistory(matches);
-        }
-    }, [value, searchHistory]);
-
-    // Close dropdown when clicking outside
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-                setIsOpen(false);
-            }
+        const handleClickOutside = (e) => {
+            if (!wrapperRef.current?.contains(e.target)) setIsOpen(false);
         };
-
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const handleInputChange = (e) => {
-        onChange(e);
-        setIsOpen(true);
-    };
+    // Lưu từ khoá vào lịch sử sau khi người dùng ngừng gõ 1 giây.
+    useEffect(() => {
+        const term = value?.trim();
+        if (!term) return undefined;
+        const timeoutId = setTimeout(() => {
+            setHistory(writeHistory([term, ...readHistory().filter((h) => h !== term)].slice(0, MAX_HISTORY)));
+        }, 1000);
+        return () => clearTimeout(timeoutId);
+    }, [value]);
 
-    const handleInputFocus = () => {
-        setIsOpen(true);
-    };
-
-    const handleHistoryClick = (term) => {
-        // Call parent's onSelect handler with history item
-        if (onSelect) {
-            onSelect({ type: 'history', label: term });
-        }
+    const selectTerm = (term) => {
+        onSelect?.({ type: "history", label: term });
         setIsOpen(false);
     };
 
-    const saveToSearchHistory = (term) => {
-        if (!term || term.trim().length === 0) return;
+    const removeTerm = (term) => setHistory(writeHistory(readHistory().filter((h) => h !== term)));
 
-        const history = JSON.parse(localStorage.getItem('roomSearchHistory') || '[]');
-        const filtered = history.filter(h => h !== term);
-        const updated = [term, ...filtered].slice(0, 10);
-        
-        localStorage.setItem('roomSearchHistory', JSON.stringify(updated));
-        setSearchHistory(updated);
+    const clearHistory = () => {
+        localStorage.removeItem(HISTORY_KEY);
+        setHistory([]);
     };
-
-    const clearSearchHistory = (e) => {
-        e.stopPropagation();
-        localStorage.removeItem('roomSearchHistory');
-        setSearchHistory([]);
-    };
-
-    const removeHistoryItem = (term, e) => {
-        e.stopPropagation();
-        const history = JSON.parse(localStorage.getItem('roomSearchHistory') || '[]');
-        const updated = history.filter(h => h !== term);
-        localStorage.setItem('roomSearchHistory', JSON.stringify(updated));
-        setSearchHistory(updated);
-    };
-
-    // Save search when user submits
-    useEffect(() => {
-        if (value && value.trim().length > 0) {
-            const timeoutId = setTimeout(() => {
-                saveToSearchHistory(value);
-            }, 1000);
-            return () => clearTimeout(timeoutId);
-        }
-    }, [value]);
 
     return (
         <div ref={wrapperRef} className="relative w-full">
-            <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-                <input
-                    ref={inputRef}
-                    type="text"
-                    name={name}
-                    value={value}
-                    onChange={handleInputChange}
-                    onFocus={handleInputFocus}
-                    placeholder={placeholder}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg 
-                             focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500
-                             transition-all duration-200 bg-white"
-                    autoComplete="off"
-                />
-            </div>
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+                id={id}
+                type="text"
+                name={name}
+                value={value}
+                onChange={(e) => {
+                    onChange(e);
+                    setIsOpen(true);
+                }}
+                onFocus={() => setIsOpen(true)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === "Escape") && setIsOpen(false)}
+                placeholder={placeholder}
+                autoComplete="off"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-sm text-slate-800 placeholder:text-slate-400 transition focus:border-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-500/20"
+            />
 
-            {/* Dropdown with search history */}
-            {isOpen && filteredHistory.length > 0 && (
-                <div className="absolute z-[9999] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                    <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-100">
-                        <span className="text-xs font-medium text-gray-600">Tìm kiếm gần đây</span>
-                        <button
-                            onClick={clearSearchHistory}
-                            className="text-xs text-rose-600 hover:text-rose-700 font-medium"
-                        >
+            {isOpen && visibleHistory.length > 0 && (
+                <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-slate-100 bg-white shadow-xl">
+                    <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2">
+                        <span className="text-xs font-medium text-slate-500">Tìm kiếm gần đây</span>
+                        <button type="button" onClick={clearHistory} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
                             Xóa tất cả
                         </button>
                     </div>
-                    
-                    <ul className="py-1">
-                        {filteredHistory.map((term, index) => (
-                            <li key={`${term}-${index}`}>
+                    <ul className="max-h-60 overflow-y-auto py-1">
+                        {visibleHistory.map((term) => (
+                            <li key={term} className="group flex items-center hover:bg-slate-50">
                                 <button
-                                    onClick={() => handleHistoryClick(term)}
-                                    className="w-full flex items-center justify-between px-4 py-2.5 
-                                             hover:bg-gray-50 transition-colors duration-150 group"
+                                    type="button"
+                                    onClick={() => selectTerm(term)}
+                                    className="flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left"
                                 >
-                                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                                        <Clock className="w-4 h-4 flex-shrink-0 text-gray-400" />
-                                        <span className="text-sm text-gray-700 truncate">{term}</span>
-                                    </div>
-                                    <button
-                                        onClick={(e) => removeHistoryItem(term, e)}
-                                        className="ml-2 p-1 opacity-0 group-hover:opacity-100 
-                                                 hover:bg-gray-200 rounded transition-all duration-150"
-                                    >
-                                        <X className="w-3 h-3 text-gray-500" />
-                                    </button>
+                                    <Clock className="h-4 w-4 shrink-0 text-slate-400" />
+                                    <span className="truncate text-sm text-slate-700">{term}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => removeTerm(term)}
+                                    aria-label={`Xóa "${term}" khỏi lịch sử`}
+                                    className="mr-2 rounded-md p-1.5 text-slate-400 opacity-0 transition hover:bg-slate-200 hover:text-slate-600 focus:opacity-100 group-hover:opacity-100"
+                                >
+                                    <X className="h-3.5 w-3.5" />
                                 </button>
                             </li>
                         ))}

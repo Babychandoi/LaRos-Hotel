@@ -25,12 +25,12 @@ public class RoomResponse {
     private LocalDateTime updatedAt;
     private String description;
     private Integer capacity;
-    private Map<String, Object> amenities; // 👈 Vẫn giữ nguyên kiểu Map
+    private Map<String, Object> amenities;
 
     private RoomTypeResponse type;
+    @Builder.Default
     private List<RoomImageResponse> images = new ArrayList<>();
 
-    // ✅ SỬA: Thêm tham số amenities đã được parse
     public static RoomResponse fromProjection(RoomsProjection r, Map<String, Object> amenities, List<RoomImageResponse> images) {
         return RoomResponse.builder()
                 .id(r.getRoomId())
@@ -43,7 +43,7 @@ public class RoomResponse {
                 .updatedAt(r.getRoomUpdatedAt())
                 .deletedAt(r.getRoomDeletedAt())
                 .capacity(r.getRoomCapacity())
-                .amenities(amenities) // 👈 ĐÃ LÀ MAP
+                .amenities(amenities)
                 .type(RoomTypeResponse.builder()
                         .id(r.getTypeId())
                         .name(r.getTypeName())

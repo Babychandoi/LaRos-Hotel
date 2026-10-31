@@ -1,12 +1,18 @@
 package com.larose.service;
 
 import com.larose.constant.RoleName;
-import com.larose.dto.*;
+import com.larose.dto.ChangePasswordRequest;
+import com.larose.dto.CreateUserRequest;
+import com.larose.dto.RoleDTO;
+import com.larose.dto.SignupRequest;
+import com.larose.dto.UpdateProfileRequest;
+import com.larose.dto.UserDTO;
 import com.larose.entity.Role;
 import com.larose.entity.User;
 import com.larose.entity.enums.OAuthProvider;
+import com.larose.exception.NotFoundException;
 import com.larose.maptruct.RoleMapper;
-
+import com.larose.maptruct.UserMapper;
 import com.larose.repository.RoleRepository;
 import com.larose.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +23,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,12 +38,17 @@ public class UserService {
     private final EmailService emailService;
     private final RoleRepository roleRepository;
     private final RoleMapper roleMapper;
-
+    private final UserMapper userMapper;
 
     @Value("${app.frontend.base-url}")
     private String baseUrl;
 
-    public User registerNewUser(SignupRequest req) {
+    /**
+     * Đăng ký tài khoản và gửi email xác thực.
+     *
+     * @param allowCustomRoles true khi người gọi là ADMIN; ngược lại role trong request bị bỏ qua và luôn là USER
+     */
+    public User registerNewUser(SignupRequest req, boolean allowCustomRoles) {
         if (userRepository.existsByEmail(req.getEmail())) {
             throw new IllegalArgumentException("Email đã tồn tại");
         }
@@ -50,50 +64,56 @@ public class UserService {
                 .emailVerified(false)
                 .isActive(true)
                 .oauthProvider(OAuthProvider.none)
-                .roles(this.getRolesFromRequest(req.getRoles()))
+                .roles(resolveRoles(allowCustomRoles ? req.getRoles() : null))
                 .build();
 
         User savedUser = userRepository.save(user);
-
-        // Gửi email xác nhận
         sendVerificationEmail(savedUser, token);
-
         return savedUser;
     }
 
-    private Set<Role> getRolesFromRequest(Set<String> roleNames) {
-        Set<Role> roles = new HashSet<>();
-
-        // Nếu roleCodes null hoặc rỗng, gán role mặc định là "USER"
-        if (roleNames == null || roleNames.isEmpty()) {
-            Optional<Role> userRoleOptional = roleRepository.findByName(RoleName.USER.name());
-            if (userRoleOptional.isEmpty()) {
-                throw new IllegalArgumentException("Role not found"); // Nếu không tìm thấy role "USER"
-            }
-            roles.add(userRoleOptional.get());
-        } else {
-            List<Role> allRoles = roleRepository.findAllByNameIn(roleNames);
-            if (allRoles.size() != roleNames.size()) {
-                throw new IllegalArgumentException("Một hoặc nhiều role không tồn tại");
-            }
-            return new HashSet<>(allRoles);
-
+    /** ADMIN tạo tài khoản trực tiếp (không cần xác thực email). */
+    public UserDTO createUser(CreateUserRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new IllegalArgumentException("Email đã tồn tại");
         }
-        return roles;
+        User user = User.builder()
+                .email(request.getEmail())
+                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .fullName(request.getFullName())
+                .phone(request.getPhone())
+                .isActive(true)
+                .emailVerified(true)
+                .emailVerifiedAt(LocalDateTime.now())
+                .oauthProvider(OAuthProvider.none)
+                .roles(resolveRoles(request.getRoles()))
+                .build();
+        return userMapper.toUserDTO(userRepository.save(user));
+    }
+
+    private Set<Role> resolveRoles(Set<String> roleNames) {
+        if (CollectionUtils.isEmpty(roleNames)) {
+            Role userRole = roleRepository.findByName(RoleName.USER.name())
+                    .orElseThrow(() -> new IllegalStateException("Chưa cấu hình role USER"));
+            return new HashSet<>(Set.of(userRole));
+        }
+        List<Role> roles = roleRepository.findAllByNameIn(roleNames);
+        if (roles.size() != roleNames.size()) {
+            throw new IllegalArgumentException("Một hoặc nhiều role không tồn tại");
+        }
+        return new HashSet<>(roles);
     }
 
     public boolean verifyEmailToken(String token) {
-        var userOpt = userRepository.findByEmailVerificationToken(token);
-        if (userOpt.isEmpty()) {
-            return false;
-        }
-
-        User user = userOpt.get();
-        user.setEmailVerified(true);
-        user.setEmailVerifiedAt(LocalDateTime.now());
-        user.setEmailVerificationToken(null);
-        userRepository.save(user);
-        return true;
+        return userRepository.findByEmailVerificationToken(token)
+                .map(user -> {
+                    user.setEmailVerified(true);
+                    user.setEmailVerifiedAt(LocalDateTime.now());
+                    user.setEmailVerificationToken(null);
+                    userRepository.save(user);
+                    return true;
+                })
+                .orElse(false);
     }
 
     @Transactional(readOnly = true)
@@ -106,50 +126,46 @@ public class UserService {
         return userRepository.findByEmailAndIsActiveTrue(email).orElse(null);
     }
 
-    public void initiatePasswordReset(String email) {
-        User user = userRepository.findByEmailAndIsActiveTrue(email)
-                .orElseThrow(() -> new IllegalArgumentException("Email không tồn tại hoặc tài khoản đã bị vô hiệu hóa"));
+    /** Người dùng đang hoạt động theo email; không có thì 404. */
+    @Transactional(readOnly = true)
+    public User getActiveUser(String email) {
+        return userRepository.findByEmailAndIsActiveTrue(email)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy người dùng: " + email));
+    }
 
+    public void initiatePasswordReset(String email) {
+        User user = getActiveUser(email);
         String resetToken = generateSecureToken();
         user.setPasswordResetToken(resetToken);
         user.setPasswordResetTokenSentAt(LocalDateTime.now());
         userRepository.save(user);
-
-        // Gửi email reset password
         sendPasswordResetEmail(user, resetToken);
     }
 
-    public boolean resetPassword(String token, String newPassword) {
+    public void resetPassword(String token, String newPassword) {
         User user = userRepository.findByPasswordResetToken(token)
-                .orElseThrow(() -> new IllegalArgumentException("Token không hợp lệ"));
-
-        // Kiểm tra token hết hạn (1 giờ)
-        if (user.getPasswordResetTokenSentAt() == null ||
-                user.getPasswordResetTokenSentAt().isBefore(LocalDateTime.now().minusHours(1))) {
-            throw new IllegalArgumentException("Token đã hết hạn");
+                .orElseThrow(() -> new IllegalArgumentException("Token không hợp lệ hoặc đã hết hạn"));
+        // Token có hiệu lực 1 giờ
+        if (user.getPasswordResetTokenSentAt() == null
+                || user.getPasswordResetTokenSentAt().isBefore(LocalDateTime.now().minusHours(1))) {
+            throw new IllegalArgumentException("Token không hợp lệ hoặc đã hết hạn");
         }
-
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setPasswordResetToken(null);
         user.setPasswordResetTokenSentAt(null);
         userRepository.save(user);
-
-        return true;
     }
 
     public void resendVerificationEmail(String email) {
         User user = userRepository.findByEmailAndIsActiveTrue(email)
                 .orElseThrow(() -> new IllegalArgumentException("Email không tồn tại hoặc tài khoản đã bị vô hiệu hóa"));
-
-        if (user.getEmailVerified()) {
+        if (Boolean.TRUE.equals(user.getEmailVerified())) {
             throw new IllegalArgumentException("Email đã được xác thực");
         }
-
         String verificationToken = generateSecureToken();
         user.setEmailVerificationToken(verificationToken);
         user.setEmailVerificationSentAt(LocalDateTime.now());
         userRepository.save(user);
-
         sendVerificationEmail(user, verificationToken);
     }
 
@@ -161,45 +177,37 @@ public class UserService {
     }
 
     public Set<RoleDTO> mapRolesToDTO(Set<Role> roles) {
-        if(CollectionUtils.isEmpty(roles)){
-            throw new IllegalArgumentException("Role has been noll");
+        if (CollectionUtils.isEmpty(roles)) {
+            return Set.of();
         }
-        return roles.stream()
-                .map(roleMapper::toDto)
-                .collect(Collectors.toSet());
+        return roles.stream().map(roleMapper::toDto).collect(Collectors.toSet());
     }
 
-    public boolean deactivateUser(Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User không tồn tại"));
-        user.setIsActive(false);
-        userRepository.save(user);
-        return true;
+    @Transactional(readOnly = true)
+    public UserDTO getUserProfileByEmail(String email) {
+        return userMapper.toUserDTO(getActiveUser(email));
     }
 
-    public boolean activateUser(Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User không tồn tại"));
-        user.setIsActive(true);
-        userRepository.save(user);
-        return true;
+    public UserDTO updateUserProfile(String email, UpdateProfileRequest request) {
+        User user = getActiveUser(email);
+        if (request.getFullName() != null && !request.getFullName().trim().isEmpty()) {
+            user.setFullName(request.getFullName().trim());
+        }
+        if (request.getPhone() != null) {
+            user.setPhone(request.getPhone().trim());
+        }
+        return userMapper.toUserDTO(userRepository.save(user));
     }
 
-    public void updateProfile(Long userId, String fullName, String phone) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User không tồn tại"));
-
-        if (fullName != null && !fullName.trim().isEmpty()) {
-            user.setFullName(fullName.trim());
+    public void changePassword(String email, ChangePasswordRequest request) {
+        User user = getActiveUser(email);
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+            throw new IllegalArgumentException("Mật khẩu hiện tại không chính xác");
         }
-        if (phone != null) {
-            user.setPhone(phone.trim());
-        }
-
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
     }
 
-    // Helper methods
     private void sendVerificationEmail(User user, String token) {
         String link = baseUrl + "/api/auth/verify?token=" + token;
         String subject = "Xác nhận đăng ký tài khoản Larose";
@@ -208,7 +216,7 @@ public class UserService {
     }
 
     private void sendPasswordResetEmail(User user, String token) {
-        String link = baseUrl + "/api/auth/reset-password?token=" + token;
+        String link = baseUrl + "/reset-password?token=" + token;
         String subject = "Yêu cầu đặt lại mật khẩu - Khách sạn Larose";
         String body = buildPasswordResetEmailBody(user.getFullName(), link);
         emailService.sendHtmlEmail(user.getEmail(), subject, body);
@@ -415,144 +423,6 @@ public class UserService {
     }
 
     private String generateSecureToken() {
-        return UUID.randomUUID().toString() + "-" + System.currentTimeMillis();
-    }
-
-    // Bổ sung các phương thức sau vào UserService
-
-    public UserDTO createUser(CreateUserRequest request) {
-        // Chuyển đổi từ CreateUserRequest sang User và lưu
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException("Email already exists");
-        }
-
-        User user = User.builder()
-                .email(request.getEmail())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .fullName(request.getFullName())
-                .phone(request.getPhone())
-                .isActive(true)
-                .emailVerified(false)
-                .roles(this.getRolesFromRequest(request.getRoles()))
-                .oauthProvider(OAuthProvider.none)
-                .build();
-
-        User savedUser = userRepository.save(user);
-        return convertToDTO(savedUser);
-    }
-
-    public Optional<UserDTO> getUserById(Long id) {
-        return userRepository.findById(id).map(this::convertToDTO);
-    }
-
-    public Optional<UserDTO> getUserByEmail(String email) {
-        return userRepository.findByEmail(email).map(this::convertToDTO);
-    }
-
-    public List<UserDTO> getAllUsers() {
-        return userRepository.findAll().stream().map(this::convertToDTO).collect(Collectors.toList());
-    }
-
-    public List<UserDTO> getActiveUsers() {
-        return userRepository.findByIsActiveTrue().stream().map(this::convertToDTO).collect(Collectors.toList());
-    }
-
-    public UserDTO updateUser(Long id, UserDTO userDTO) {
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-
-        // Cập nhật các trường cho phép
-        if (userDTO.getFullName() != null) {
-            user.setFullName(userDTO.getFullName());
-        }
-        if (userDTO.getPhone() != null) {
-            user.setPhone(userDTO.getPhone());
-        }
-        if (userDTO.getIsActive() != null) {
-            user.setIsActive(userDTO.getIsActive());
-        }
-
-        User updatedUser = userRepository.save(user);
-        return convertToDTO(updatedUser);
-    }
-
-    public void deleteUser(Long id) {
-        userRepository.deleteById(id);
-    }
-
-    public void softDeleteUser(Long id) {
-        User user = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        user.setDeletedAt(LocalDateTime.now());
-        user.setIsActive(false);
-        userRepository.save(user);
-    }
-
-    // THÊM: Phương thức verifyEmail cho UserController
-    public boolean verifyEmail(String token) {
-        return verifyEmailToken(token);
-    }
-
-    // Thêm các phương thức sau vào UserService
-
-    /**
-     * Lấy thông tin profile user bằng email
-     */
-    @Transactional(readOnly = true)
-    public UserDTO getUserProfileByEmail(String email) {
-        User user = userRepository.findByEmailAndIsActiveTrue(email)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        return convertToDTO(user);
-    }
-
-    /**
-     * Cập nhật thông tin profile
-     */
-    public UserDTO updateUserProfile(String email, UpdateProfileRequest request) {
-        User user = userRepository.findByEmailAndIsActiveTrue(email)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-
-        if (request.getFullName() != null && !request.getFullName().trim().isEmpty()) {
-            user.setFullName(request.getFullName().trim());
-        }
-        if (request.getPhone() != null) {
-            user.setPhone(request.getPhone().trim());
-        }
-
-        User updatedUser = userRepository.save(user);
-        return convertToDTO(updatedUser);
-    }
-
-    /**
-     * Đổi mật khẩu
-     */
-    public boolean changePassword(String email, ChangePasswordRequest request) {
-        User user = userRepository.findByEmailAndIsActiveTrue(email)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-
-        // Kiểm tra mật khẩu hiện tại
-        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
-            return false;
-        }
-
-        // Cập nhật mật khẩu mới
-        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(user);
-        return true;
-    }
-
-    // Phương thức chuyển đổi từ User sang UserDTO
-    private UserDTO convertToDTO(User user) {
-        UserDTO userDTO = new UserDTO();
-        userDTO.setId(user.getId());
-        userDTO.setEmail(user.getEmail());
-        userDTO.setFullName(user.getFullName());
-        userDTO.setPhone(user.getPhone());
-        userDTO.setIsActive(user.getIsActive());
-        userDTO.setEmailVerified(user.getEmailVerified());
-        userDTO.setLastLogin(user.getLastLogin());
-        userDTO.setCreatedAt(user.getCreatedAt());
-        // Nếu có các trường khác trong UserDTO, cần set thêm
-        return userDTO;
+        return UUID.randomUUID() + "-" + System.currentTimeMillis();
     }
 }

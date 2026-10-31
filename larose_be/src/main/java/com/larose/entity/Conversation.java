@@ -23,7 +23,7 @@ public class Conversation {
     private User assignedTo;
 
     @Enumerated(EnumType.STRING)
-    private ConversationStatus status = ConversationStatus.OPEN;
+    private ConversationStatus status = ConversationStatus.open;
 
     @Column(name = "last_message_at")
     private LocalDateTime lastMessageAt;
@@ -37,6 +37,6 @@ public class Conversation {
     private LocalDateTime updatedAt;
 
     public enum ConversationStatus {
-        OPEN, PENDING, CLOSED
+        open, pending, closed
     }
 }

@@ -15,7 +15,7 @@ Tính năng xuất file thuế VAT cho phép admin xuất báo cáo thuế GTGT 
 - Hoặc sử dụng các nút xem nhanh: 7 ngày, 30 ngày, 90 ngày, Tháng này, Năm nay, Q1-Q4
 
 ### 3. Xuất File Thuế
-- Click nút **"Xuất File Thuế"** (màu xanh dương)
+- Click nút **"Báo cáo thuế VAT"** (nút màu hồng ở góc phải trên cùng)
 - Hệ thống sẽ tính toán và hiển thị modal với dữ liệu thuế
 
 ### 4. Nhập Khoản Chi Tiêu
@@ -113,18 +113,7 @@ File template DOCX sử dụng các placeholder:
 **Response:**
 - File DOCX (application/octet-stream)
 
-### POST `/api/vat-report/export`
-**Body:**
-```json
-{
-  "startDate": "2025-01-01",
-  "endDate": "2025-01-31",
-  "khoanchi": 50000000
-}
-```
-
-**Response:**
-- File DOCX (application/octet-stream)
+Endpoint chỉ dành cho tài khoản **ADMIN** (cần gửi `Authorization: Bearer <token>`).
 
 ## Dependencies
 

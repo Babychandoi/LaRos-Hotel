@@ -2,390 +2,299 @@ package com.larose.service;
 
 import com.larose.dto.BookingDTO;
 import com.larose.dto.BookingSuggestionDTO;
-import com.larose.dto.projection.BookingProjection;
-import com.larose.dto.search.BookingSearchDto;
-import com.larose.dto.search.SearchDto;
 import com.larose.entity.Booking;
 import com.larose.entity.Room;
+import com.larose.entity.Transaction;
 import com.larose.entity.User;
+import com.larose.exception.NotFoundException;
 import com.larose.maptruct.BookingMapper;
 import com.larose.repository.BookingRepository;
+import com.larose.repository.TransactionRepository;
+import com.larose.util.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class BookingService {
 
+    /** Booking ở các trạng thái này không còn giữ phòng. */
+    private static final Set<Booking.Status> RELEASED_STATUSES =
+            EnumSet.of(Booking.Status.cancelled, Booking.Status.checked_out, Booking.Status.no_show);
+    private static final int CANCEL_WINDOW_HOURS = 2;
+
     private final BookingRepository bookingRepository;
+    private final TransactionRepository transactionRepository;
     private final UserService userService;
     private final RoomService roomService;
     private final BookingMapper bookingMapper;
 
-    @Value("${app.hotel.code:La_Rose}")
+    @Value("${app.hotel.code:LR}")
     private String hotelCode;
 
-    public List<BookingDTO> getUserBookings(String email, int page, int size) {
-        var user = userService.findByEmailAndActive(email);
-        if (user == null) {
-            throw new IllegalArgumentException("User not found");
-        }
-
-        Pageable pageable = PageRequest.of(page, size);
-        Page<Booking> bookings = bookingRepository.findByUserIdOrderByCreatedAtDesc(user.getId(), pageable);
-
-        return bookings.stream()
-                .map(this::convertToBookingDTO)
-                .collect(Collectors.toList());
-    }
-
     public Page<BookingDTO> getUserBookingsByStatus(String email, String status, int page, int size) {
-        var user = userService.findByEmailAndActive(email);
-        if (user == null) {
-            throw new IllegalArgumentException("User not found");
-        }
-
-        try {
-            Pageable pageable = PageRequest.of(page, size);
-            Page<Booking> bookings = bookingRepository.findByUserIdAndStatusOrderByCreatedAtDesc(user.getId(),
-                    status == null ? null : Booking.Status.valueOf(status), pageable);
-
-            return bookings.map(this::convertToBookingDTO);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status: " + status);
-        }
+        User user = userService.getActiveUser(email);
+        Booking.Status statusFilter = parseStatus(status);
+        return bookingRepository
+                .findByUserIdAndStatusOrderByCreatedAtDesc(user.getId(), statusFilter, PageRequest.of(page, size))
+                .map(bookingMapper::toBookingDTO);
     }
 
-    public Page<BookingDTO> getAll(BookingSearchDto request) {
-        Pageable pageable = PageRequest.of(request.getPageIndex() - 1, request.getPageSize());
-
-        Page<BookingProjection> bookings = bookingRepository.getAll(request, pageable);
-
-        return bookings.map(bookingMapper::toBookingDTO);
+    public List<BookingDTO> getBookingsByUserId(Long userId) {
+        return bookingRepository.findByUserIdOrderByCreatedAtDesc(userId, Pageable.unpaged())
+                .map(bookingMapper::toBookingDTO)
+                .getContent();
     }
 
     public List<BookingDTO> getBookingDateWithRoomId(Long roomId) {
-        if (roomId == null) {
-            return Collections.emptyList();
-        }
-        List<Booking> list = bookingRepository.getBookingDateWithRoomId(roomId);
-        if (CollectionUtils.isEmpty(list)) {
-            return Collections.emptyList();
-        }
-        return list.stream().map(bookingMapper::toBookingDTO).collect(Collectors.toList());
+        return bookingRepository.getBookingDateWithRoomId(roomId).stream()
+                .map(bookingMapper::toBookingDTO)
+                .toList();
     }
 
+    /** Phòng còn trống trong khoảng [checkIn, checkOut) hay không. */
+    public boolean isRoomAvailable(Long roomId, LocalDate checkIn, LocalDate checkOut) {
+        validateDates(checkIn, checkOut);
+        roomService.getRoomById(roomId);
+        return !bookingRepository.existsByRoomIdAndStatusNotInAndCheckInBeforeAndCheckOutAfter(
+                roomId, RELEASED_STATUSES, checkOut, checkIn);
+    }
+
+    /** Chi tiết booking: chỉ chủ booking hoặc ADMIN. */
     public BookingDTO getDetail(Long id) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found"));
-        return convertToBookingDTO(booking);
-    }
-
-    @Transactional
-    public BookingDTO create(BookingDTO request) {
-        Booking booking = bookingMapper.toBooking(request);
-        booking.setStatus(Booking.Status.confirmed);
-        this.genCode(booking);
-
-        User user = userService.findByEmailAndActive(request.getUserEmail());
-        if (user == null) {
-            throw new IllegalArgumentException("Not existing user: " + request.getUserEmail());
-        }
-        booking.setUser(user);
-
-        // ✅ SỬA: DÙNG roomId → GỌI roomService.getRoomById()
-        Room room = roomService.getRoomById(request.getRoomId());
-        booking.setRoom(room);
-        if (room.getRoomType() == null) {
-            throw new IllegalArgumentException("Phòng không có loại phòng được gán.");
-        }
-        booking.setRoomType(room.getRoomType());
-
-        BigDecimal total = room.getRoomType().getBasePrice()
-                .multiply(BigDecimal.valueOf(request.getNights()));
-        booking.setPriceTotal(total);
-
-        return this.convertToBookingDTO(bookingRepository.save(booking));
-    }
-
-    @Transactional
-    public BookingDTO update(Long id, BookingDTO request) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Not Found Booking with id: " + id));
-
-        booking.setCheckIn(request.getCheckIn());
-        booking.setCheckOut(request.getCheckOut());
-        booking.setGuests(request.getGuests());
-        booking.setNights(request.getNights());
-
-        Room room = booking.getRoom();
-
-        // ✅ SỬA: SO SÁNH roomId (Long) thay vì roomCode (String)
-        if (!booking.getRoom().getId().equals(request.getRoomId())) {
-            room = roomService.getRoomById(request.getRoomId());
-            booking.setRoom(room);
-        }
-
-        if (room.getRoomType() == null) {
-            throw new IllegalArgumentException("Phòng không có loại phòng được gán.");
-        }
-        booking.setRoomType(room.getRoomType());
-
-        BigDecimal total = room.getRoomType().getBasePrice()
-                .multiply(BigDecimal.valueOf(request.getNights()));
-        booking.setPriceTotal(total);
-
-        return this.convertToBookingDTO(bookingRepository.save(booking));
-    }
-
-    @Transactional
-    public void delete(Long id) {
-        Booking delete = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Not Found Booking with id: " + id));
-        delete.setStatus(Booking.Status.no_show);
-        bookingRepository.save(delete);
-    }
-
-    @Transactional
-    public void cancelBooking(Long bookingId) {
-        int updated = bookingRepository.setCancelledBooking(bookingId);
-        if (updated == 0) {
-            throw new IllegalArgumentException("Không thể hủy booking (đã quá 2h hoặc đã thanh toán)");
-        }
-    }
-
-    public Page<BookingDTO> getAllBookingsForAdmin(String status, String search, Pageable pageable) {
-        Page<Booking> bookings;
-
-        if (status != null && !status.isEmpty() && !status.equalsIgnoreCase("all")) {
-            try {
-                Booking.Status bookingStatus = Booking.Status.valueOf(status);
-                if (search != null && !search.isEmpty()) {
-                    bookings = bookingRepository.findByStatusAndSearchTerm(bookingStatus, search, pageable);
-                } else {
-                    bookings = bookingRepository.findByStatus(bookingStatus, pageable);
-                }
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Invalid status: " + status);
-            }
-        } else {
-            if (search != null && !search.isEmpty()) {
-                bookings = bookingRepository.findBySearchTerm(search, pageable);
-            } else {
-                bookings = bookingRepository.findAll(pageable);
-            }
-        }
-
-        return bookings.map(this::convertToBookingDTO);
-    }
-
-    public BookingDTO getBookingById(Long id) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found with id: " + id));
-        return convertToBookingDTO(booking);
-    }
-
-    @Transactional
-    public BookingDTO updateBookingStatus(Long id, String status) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found with id: " + id));
-
-        try {
-            booking.setStatus(Booking.Status.valueOf(status));
-            Booking updated = bookingRepository.save(booking);
-            return convertToBookingDTO(updated);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status: " + status);
-        }
-    }
-
-    @Transactional
-    public void cancelBookingByAdmin(Long id, String reason) {
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found with id: " + id));
-
-        booking.setStatus(Booking.Status.cancelled);
-        booking.setCancelReason(reason);
-        booking.setCancelledAt(java.time.LocalDateTime.now());
-        bookingRepository.save(booking);
-    }
-
-    private void genCode(Booking entity) {
-        // Format: [HOTEL_CODE]-BK-[YYYY-MM-DD]-[SEQUENCE]
-        // Ví dụ: LR-BK-2025-11-10-001
-        
-        LocalDate today = LocalDate.now();
-        String dateStr = today.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        
-        // Tìm booking mới nhất cùng ngày
-        Booking latestBooking = bookingRepository.getTop1();
-        
-        int sequence = 1;
-        
-        if (latestBooking != null && latestBooking.getBookingCode() != null) {
-            String latestCode = latestBooking.getBookingCode();
-            
-            // Kiểm tra xem code có format mới không (có chứa ngày)
-            if (latestCode.contains(dateStr)) {
-                // Lấy số thứ tự từ code cùng ngày
-                try {
-                    String[] parts = latestCode.split("-");
-                    if (parts.length >= 4) {
-                        String lastPart = parts[parts.length - 1];
-                        sequence = Integer.parseInt(lastPart) + 1;
-                    }
-                } catch (NumberFormatException e) {
-                    // Nếu không parse được, reset về 1
-                    sequence = 1;
-                }
-            } else {
-                // Code cũ hoặc khác ngày, reset về 1
-                sequence = 1;
-            }
-        }
-        
-        // Format: LR-BK-2025-11-10-001 (3 chữ số cho sequence)
-        String bookingCode = String.format("%s-%s-%03d", 
-            hotelCode, dateStr, sequence);
-        
-        entity.setBookingCode(bookingCode);
-    }
-
-    public Booking getBookingByCode(String code) {
-        return bookingRepository.findByBookingCode(code)
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found with code: " + code));
-    }
-
-    private BookingDTO convertToBookingDTO(Booking booking) {
-        // Sử dụng BookingMapper để map tất cả fields bao gồm bookingServices
+        Booking booking = findBooking(id);
+        SecurityUtils.checkOwnerOrAdmin(booking.getUser());
         return bookingMapper.toBookingDTO(booking);
     }
 
     /**
-     * Get personalized search suggestions based on user's booking history
-     * Returns both room types and specific rooms sorted by recency and frequency
+     * Tạo booking cho người dùng đang đăng nhập (ADMIN được đặt hộ theo userEmail trong request).
+     */
+    @Transactional
+    public BookingDTO create(BookingDTO request) {
+        validateDates(request.getCheckIn(), request.getCheckOut());
+        if (request.getNights() == null || request.getNights() <= 0) {
+            throw new IllegalArgumentException("Số đêm phải lớn hơn 0");
+        }
+
+        String email = SecurityUtils.isAdmin() && StringUtils.hasText(request.getUserEmail())
+                ? request.getUserEmail()
+                : SecurityUtils.currentEmail();
+        User user = userService.getActiveUser(email);
+
+        Room room = roomService.getRoomById(request.getRoomId());
+        if (room.getRoomType() == null) {
+            throw new IllegalArgumentException("Phòng không có loại phòng được gán.");
+        }
+        if (bookingRepository.existsByRoomIdAndStatusNotInAndCheckInBeforeAndCheckOutAfter(
+                room.getId(), RELEASED_STATUSES, request.getCheckOut(), request.getCheckIn())) {
+            throw new IllegalStateException("Phòng đã được đặt trong khoảng thời gian này");
+        }
+
+        Booking booking = bookingMapper.toBooking(request);
+        booking.setStatus(Booking.Status.confirmed);
+        booking.setBookingCode(generateCode());
+        booking.setUser(user);
+        booking.setRoom(room);
+        booking.setRoomType(room.getRoomType());
+        booking.setPriceTotal(room.getRoomType().getBasePrice().multiply(BigDecimal.valueOf(request.getNights())));
+        return bookingMapper.toBookingDTO(bookingRepository.save(booking));
+    }
+
+    /**
+     * Khách tự hủy: chỉ booking pending/confirmed, trong vòng 2 giờ kể từ khi đặt và chưa thanh toán.
+     */
+    @Transactional
+    public void cancelBooking(Long bookingId) {
+        Booking booking = findBooking(bookingId);
+        SecurityUtils.checkOwnerOrAdmin(booking.getUser());
+
+        Optional<Transaction> transaction = transactionRepository.getByBookingId(bookingId);
+        boolean cancellable = (booking.getStatus() == Booking.Status.pending || booking.getStatus() == Booking.Status.confirmed)
+                && booking.getCreatedAt() != null
+                && booking.getCreatedAt().isAfter(LocalDateTime.now().minusHours(CANCEL_WINDOW_HOURS))
+                && transaction.map(t -> t.getStatus() == Transaction.Status.initiated).orElse(true);
+        if (!cancellable) {
+            throw new IllegalStateException("Không thể hủy booking (đã quá 2h hoặc đã thanh toán)");
+        }
+
+        booking.setStatus(Booking.Status.cancelled);
+        booking.setCancelledAt(LocalDateTime.now());
+        transaction.ifPresent(t -> t.setStatus(Transaction.Status.refunded));
+    }
+
+    public Page<BookingDTO> getAllBookingsForAdmin(String status, String search, Pageable pageable) {
+        Booking.Status bookingStatus = "all".equalsIgnoreCase(status) ? null : parseStatus(status);
+        String keyword = StringUtils.hasText(search) ? "%" + search.trim().toLowerCase() + "%" : null;
+        return bookingRepository.searchForAdmin(bookingStatus, keyword, pageable).map(bookingMapper::toBookingDTO);
+    }
+
+    @Transactional
+    public BookingDTO updateBookingStatus(Long id, String status) {
+        Booking booking = findBooking(id);
+        Booking.Status newStatus = parseStatus(status);
+        if (newStatus == null) {
+            throw new IllegalArgumentException("Trạng thái không được để trống");
+        }
+        booking.setStatus(newStatus);
+        return bookingMapper.toBookingDTO(bookingRepository.save(booking));
+    }
+
+    @Transactional
+    public void cancelBookingByAdmin(Long id, String reason) {
+        Booking booking = findBooking(id);
+        booking.setStatus(Booking.Status.cancelled);
+        booking.setCancelReason(reason);
+        booking.setCancelledAt(LocalDateTime.now());
+        bookingRepository.save(booking);
+    }
+
+    public Booking getBookingByCode(String code) {
+        return bookingRepository.findByBookingCode(code)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy booking với mã: " + code));
+    }
+
+    /**
+     * Gợi ý tìm kiếm cá nhân hoá từ lịch sử đặt phòng 6 tháng gần nhất:
+     * tối đa 3 loại phòng (mới nhất trước) + 2 phòng được đặt lại nhiều lần.
      */
     public List<BookingSuggestionDTO> getUserBookingSuggestions(String email) {
-        User user = userService.findByEmailAndActive(email);
-        if (user == null) {
-            throw new IllegalArgumentException("User not found");
-        }
-        
-        // Get bookings from last 6 months
-        LocalDate sixMonthsAgo = LocalDate.now().minusMonths(6);
-        
+        User user = userService.getActiveUser(email);
         List<Booking> recentBookings = bookingRepository
-            .findByUserIdAndCheckInAfterOrderByCheckInDesc(user.getId(), sixMonthsAgo);
-        
-        List<BookingSuggestionDTO> suggestions = new ArrayList<>();
-        
-        // Group by room type
-        Map<Long, BookingSuggestionDTO> roomTypeMap = new HashMap<>();
-        // Track individual rooms
-        Map<Long, BookingSuggestionDTO> roomMap = new HashMap<>();
-        
+                .findByUserIdAndCheckInAfterOrderByCheckInDesc(user.getId(), LocalDate.now().minusMonths(6));
+
+        Map<Long, BookingSuggestionDTO> roomTypes = new LinkedHashMap<>();
+        Map<Long, BookingSuggestionDTO> rooms = new LinkedHashMap<>();
         for (Booking booking : recentBookings) {
             if (booking.getRoomType() == null) {
                 continue;
             }
-            
-            // Process room type suggestions
             Long roomTypeId = booking.getRoomType().getId();
-            if (roomTypeMap.containsKey(roomTypeId)) {
-                BookingSuggestionDTO existing = roomTypeMap.get(roomTypeId);
-                existing.setBookingCount(existing.getBookingCount() + 1);
-                
-                if (booking.getCheckIn().isAfter(existing.getLastBookedDate())) {
-                    existing.setLastBookedDate(booking.getCheckIn());
-                }
-            } else {
+            String roomTypeName = booking.getRoomType().getName();
+            accumulate(roomTypes, roomTypeId, booking.getCheckIn(), () -> {
                 BookingSuggestionDTO dto = new BookingSuggestionDTO();
                 dto.setRoomTypeId(roomTypeId);
-                dto.setRoomTypeName(booking.getRoomType().getName());
-                dto.setLastBookedDate(booking.getCheckIn());
-                dto.setBookingCount(1);
+                dto.setRoomTypeName(roomTypeName);
                 dto.setSuggestionType("roomType");
-                roomTypeMap.put(roomTypeId, dto);
-            }
-            
-            // Process specific room suggestions (for frequently booked rooms)
+                return dto;
+            });
             if (booking.getRoom() != null) {
-                Long roomId = booking.getRoom().getId();
-                if (roomMap.containsKey(roomId)) {
-                    BookingSuggestionDTO existing = roomMap.get(roomId);
-                    existing.setBookingCount(existing.getBookingCount() + 1);
-                    
-                    if (booking.getCheckIn().isAfter(existing.getLastBookedDate())) {
-                        existing.setLastBookedDate(booking.getCheckIn());
-                    }
-                } else {
+                Room room = booking.getRoom();
+                accumulate(rooms, room.getId(), booking.getCheckIn(), () -> {
                     BookingSuggestionDTO dto = new BookingSuggestionDTO();
-                    dto.setRoomId(roomId);
-                    dto.setRoomTitle(booking.getRoom().getTitle());
-                    dto.setRoomCode(booking.getRoom().getCode());
+                    dto.setRoomId(room.getId());
+                    dto.setRoomTitle(room.getTitle());
+                    dto.setRoomCode(room.getCode());
                     dto.setRoomTypeId(roomTypeId);
-                    dto.setRoomTypeName(booking.getRoomType().getName());
-                    dto.setLastBookedDate(booking.getCheckIn());
-                    dto.setBookingCount(1);
+                    dto.setRoomTypeName(roomTypeName);
                     dto.setSuggestionType("room");
-                    roomMap.put(roomId, dto);
-                }
+                    return dto;
+                });
             }
         }
-        
-        // Add room type suggestions (top 3)
-        suggestions.addAll(
-            roomTypeMap.values().stream()
-                .sorted(Comparator
-                    .comparing(BookingSuggestionDTO::getLastBookedDate).reversed()
-                    .thenComparing(BookingSuggestionDTO::getBookingCount).reversed())
+
+        List<BookingSuggestionDTO> suggestions = new ArrayList<>();
+        roomTypes.values().stream()
+                .sorted(Comparator.comparing(BookingSuggestionDTO::getLastBookedDate, Comparator.reverseOrder())
+                        .thenComparing(BookingSuggestionDTO::getBookingCount, Comparator.reverseOrder()))
                 .limit(3)
-                .collect(Collectors.toList())
-        );
-        
-        // Add specific room suggestions (only if booked more than once, top 2)
-        suggestions.addAll(
-            roomMap.values().stream()
+                .forEach(suggestions::add);
+        rooms.values().stream()
                 .filter(dto -> dto.getBookingCount() > 1)
-                .sorted(Comparator
-                    .comparing(BookingSuggestionDTO::getBookingCount).reversed()
-                    .thenComparing(BookingSuggestionDTO::getLastBookedDate).reversed())
+                .sorted(Comparator.comparing(BookingSuggestionDTO::getBookingCount, Comparator.reverseOrder())
+                        .thenComparing(BookingSuggestionDTO::getLastBookedDate, Comparator.reverseOrder()))
                 .limit(2)
-                .collect(Collectors.toList())
-        );
-        
+                .forEach(suggestions::add);
         return suggestions;
     }
 
-    /**
-     * Get popular room types for unauthenticated users or users without booking history
-     * Returns top 5 most booked room types across all users
-     */
+    /** Top 5 loại phòng được đặt nhiều nhất (cho khách chưa đăng nhập / chưa có lịch sử). */
     public List<BookingSuggestionDTO> getPopularRoomTypes() {
-        List<Object[]> results = bookingRepository.findMostPopularRoomTypes(PageRequest.of(0, 5));
-        
-        return results.stream()
-            .map(row -> {
-                BookingSuggestionDTO dto = new BookingSuggestionDTO();
-                dto.setRoomTypeId(((Number) row[0]).longValue());
-                dto.setRoomTypeName((String) row[1]);
-                dto.setBookingCount(((Number) row[2]).intValue());
-                dto.setSuggestionType("roomType");
-                return dto;
-            })
-            .collect(Collectors.toList());
+        return bookingRepository.findMostPopularRoomTypes(PageRequest.of(0, 5)).stream()
+                .map(row -> {
+                    BookingSuggestionDTO dto = new BookingSuggestionDTO();
+                    dto.setRoomTypeId(((Number) row[0]).longValue());
+                    dto.setRoomTypeName((String) row[1]);
+                    dto.setBookingCount(((Number) row[2]).intValue());
+                    dto.setSuggestionType("roomType");
+                    return dto;
+                })
+                .toList();
+    }
+
+    private void accumulate(Map<Long, BookingSuggestionDTO> target, Long key, LocalDate checkIn,
+                            Supplier<BookingSuggestionDTO> factory) {
+        BookingSuggestionDTO dto = target.computeIfAbsent(key, k -> {
+            BookingSuggestionDTO created = factory.get();
+            created.setBookingCount(0);
+            created.setLastBookedDate(checkIn);
+            return created;
+        });
+        dto.setBookingCount(dto.getBookingCount() + 1);
+        if (checkIn.isAfter(dto.getLastBookedDate())) {
+            dto.setLastBookedDate(checkIn);
+        }
+    }
+
+    private Booking findBooking(Long id) {
+        return bookingRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy booking với id: " + id));
+    }
+
+    private Booking.Status parseStatus(String status) {
+        if (!StringUtils.hasText(status)) {
+            return null;
+        }
+        try {
+            return Booking.Status.valueOf(status.trim().toLowerCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Trạng thái booking không hợp lệ: " + status);
+        }
+    }
+
+    private void validateDates(LocalDate checkIn, LocalDate checkOut) {
+        if (checkIn == null || checkOut == null) {
+            throw new IllegalArgumentException("Ngày nhận phòng và trả phòng là bắt buộc");
+        }
+        if (!checkOut.isAfter(checkIn)) {
+            throw new IllegalArgumentException("Ngày trả phòng phải sau ngày nhận phòng");
+        }
+    }
+
+    /** Mã booking: [HOTEL_CODE]-[yyyy-MM-dd]-[số thứ tự 3 chữ số trong ngày], vd. LR-2025-11-10-001. */
+    private String generateCode() {
+        String dateStr = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
+        int sequence = 1;
+        Booking latest = bookingRepository.getTop1();
+        if (latest != null && latest.getBookingCode() != null && latest.getBookingCode().contains(dateStr)) {
+            String code = latest.getBookingCode();
+            try {
+                sequence = Integer.parseInt(code.substring(code.lastIndexOf('-') + 1)) + 1;
+            } catch (NumberFormatException ignored) {
+                // mã cũ không đúng định dạng -> bắt đầu lại từ 1
+            }
+        }
+        return String.format("%s-%s-%03d", hotelCode, dateStr, sequence);
     }
 }

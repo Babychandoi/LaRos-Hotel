@@ -1,812 +1,260 @@
-import React, { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "react-toastify";
+import { RefreshCw, UserCheck, UserPlus, UserX, Users } from "lucide-react";
 import userService from "../services/user.service";
+import CustomerDetailModal from "../components/customer/CustomerDetailModal";
+import CustomerFormModal from "../components/customer/CustomerFormModal";
+import CustomerTable from "../components/customer/CustomerTable";
+import {
+    Button,
+    ConfirmDialog,
+    DataState,
+    PageHeader,
+    Pagination,
+    SearchInput,
+} from "../components/common";
+import { getErrorMessage } from "../components/common/format";
+import { toolbarActionClass } from "../components/common/ui";
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 const CustomerManagement = () => {
     const [customers, setCustomers] = useState([]);
-    const [loading, setLoading] = useState(false);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [selectedCustomer, setSelectedCustomer] = useState(null);
-    const [showDetailModal, setShowDetailModal] = useState(false);
-    const [showEditModal, setShowEditModal] = useState(false);
-    const [showCreateModal, setShowCreateModal] = useState(false);
-    const [customerStats, setCustomerStats] = useState({});
-    const [searchTerm, setSearchTerm] = useState("");
-    const [editForm, setEditForm] = useState({
-        fullName: "",
-        phone: "",
-        isActive: true,
-        emailVerified: false,
-    });
-    const [createForm, setCreateForm] = useState({
-        email: "",
-        password: "",
-        fullName: "",
-        phone: "",
-    });
+    const [searchInput, setSearchInput] = useState("");
+    const [search, setSearch] = useState("");
+    const [page, setPage] = useState(0);
+    const [pageSize, setPageSize] = useState(20);
+    const [totalPages, setTotalPages] = useState(0);
+    const [totalElements, setTotalElements] = useState(0);
+    const [reloadKey, setReloadKey] = useState(0);
 
-    const fetchCustomers = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const params = {
-                page: 0,
-                size: 100,
-                sortBy: 'createdAt',
-                sortDirection: 'desc'
-            };
-            if (searchTerm) {
-                params.search = searchTerm;
-            }
-            const response = await userService.getUsers(params);
-            // Admin API trả về Page object với content array
-            const customerList = response.content || response || [];
-            setCustomers(customerList);
-        } catch (err) {
-            setError(
-                err.response?.data?.message ||
-                    "Lỗi khi tải danh sách khách hàng",
-            );
-            console.error("Error fetching customers:", err);
-        } finally {
-            setLoading(false);
-        }
-    };
+    const [detail, setDetail] = useState(null);
+    const [form, setForm] = useState({ open: false, customer: null });
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [toggleTarget, setToggleTarget] = useState(null);
 
-    const deleteCustomer = async (customerId) => {
-        try {
-            await userService.deleteUser(customerId);
-            setCustomers((prev) =>
-                prev.filter((customer) => customer.id !== customerId),
-            );
-        } catch (err) {
-            throw err.response?.data || err;
-        }
-    };
-
-    const updateCustomer = async (customerId, data) => {
-        try {
-            const response = await userService.updateUser(customerId, data);
-            setCustomers((prev) =>
-                prev.map((customer) =>
-                    customer.id === customerId
-                        ? { ...customer, ...data }
-                        : customer,
-                ),
-            );
-            return response;
-        } catch (err) {
-            throw err.response?.data || err;
-        }
-    };
-
-    const createCustomer = async (data) => {
-        try {
-            await userService.createUser(data);
-            fetchCustomers();
-        } catch (err) {
-            throw err.response?.data || err;
-        }
-    };
-
-    const fetchCustomerStats = async (userId) => {
-        try {
-            setLoading(true);
-            const [bookings, transactions, reviews] = await Promise.all([
-                userService.getUserBookings(userId),
-                userService.getUserTransactions(userId),
-                userService.getUserReviews(userId),
-            ]);
-
-            const totalSpent = transactions.reduce(
-                (sum, t) => sum + (t.amount || 0),
-                0,
-            );
-            const averageRating =
-                reviews.length > 0
-                    ? reviews.reduce((sum, r) => sum + (r.rating || 0), 0) /
-                      reviews.length
-                    : 0;
-
-            setCustomerStats({
-                totalBookings: bookings.length || 0,
-                totalTransactions: transactions.length || 0,
-                totalSpent: totalSpent,
-                totalReviews: reviews.length || 0,
-                averageRating: averageRating,
-                recentBookings: bookings.slice(0, 3),
-                recentReviews: reviews.slice(0, 3),
-            });
-        } catch (err) {
-            console.error("Error fetching customer stats:", err);
-            setCustomerStats({
-                totalBookings: 0,
-                totalTransactions: 0,
-                totalSpent: 0,
-                totalReviews: 0,
-                averageRating: 0,
-                recentBookings: [],
-                recentReviews: [],
-            });
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleViewDetails = async (customer) => {
-        setSelectedCustomer(customer);
-        setShowDetailModal(true);
-        await fetchCustomerStats(customer.id);
-    };
-
-    const handleEdit = (customer) => {
-        setSelectedCustomer(customer);
-        setEditForm({
-            fullName: customer.fullName,
-            phone: customer.phone,
-            isActive: customer.isActive,
-            emailVerified: customer.emailVerified,
-        });
-        setShowEditModal(true);
-    };
-
-    const handleSaveEdit = async () => {
-        try {
-            await updateCustomer(selectedCustomer.id, editForm);
-            alert("Cập nhật thông tin khách hàng thành công!");
-            setShowEditModal(false);
-        } catch (err) {
-            alert("Lỗi khi cập nhật: " + (err.message || "Lỗi không xác định"));
-        }
-    };
-
-    const handleCreate = async () => {
-        try {
-            await createCustomer(createForm);
-            alert("Tạo khách hàng mới thành công!");
-            setShowCreateModal(false);
-            setCreateForm({
-                email: "",
-                password: "",
-                fullName: "",
-                phone: "",
-            });
-        } catch (err) {
-            alert(
-                "Lỗi khi tạo khách hàng: " +
-                    (err.message || "Lỗi không xác định"),
-            );
-        }
-    };
-
-    const handleDelete = async (customerId, customerName) => {
-        if (
-            window.confirm(`Bạn có chắc muốn xóa khách hàng "${customerName}"?`)
-        ) {
-            try {
-                await deleteCustomer(customerId);
-                alert("Xóa khách hàng thành công!");
-            } catch (err) {
-                alert(
-                    "Lỗi khi xóa khách hàng: " +
-                        (err.message || "Lỗi không xác định"),
-                );
-            }
-        }
-    };
-
-    const handleSearch = (e) => {
-        setSearchTerm(e.target.value);
-    };
-
-    const handleSearchSubmit = (e) => {
-        e.preventDefault();
-        fetchCustomers();
-    };
-
-    // Format date
-    const formatDate = (dateString) => {
-        if (!dateString) return "Chưa có dữ liệu";
-        try {
-            const date = new Date(dateString);
-            return date.toLocaleDateString("vi-VN", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-            });
-        } catch {
-            return dateString;
-        }
-    };
+    // Tìm kiếm phía server, chờ người dùng ngừng gõ 400ms.
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setSearch(searchInput.trim());
+            setPage(0);
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [searchInput]);
 
     useEffect(() => {
-        fetchCustomers();
-    }, []);
+        let ignore = false;
+        setLoading(true);
+        setError(null);
+        const params = { page, size: pageSize, sortBy: "createdAt", sortDirection: "desc" };
+        if (search) params.search = search;
 
-    if (loading && customers.length === 0) {
-        return (
-            <div className="bg-white p-6 rounded-2xl shadow-lg">
-                <div className="flex justify-center items-center h-32">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-600">
-                        Đang tải dữ liệu...
-                    </span>
-                </div>
-            </div>
-        );
-    }
+        userService
+            .getUsers(params)
+            .then((response) => {
+                if (ignore) return;
+                const list = response?.content || (Array.isArray(response) ? response : []);
+                setCustomers(list);
+                setTotalPages(response?.totalPages ?? 1);
+                setTotalElements(response?.totalElements ?? list.length);
+            })
+            .catch((err) => {
+                if (!ignore) setError(getErrorMessage(err, "Lỗi khi tải danh sách khách hàng"));
+            })
+            .finally(() => {
+                if (!ignore) setLoading(false);
+            });
+        return () => {
+            ignore = true;
+        };
+    }, [page, pageSize, search, reloadKey]);
 
-    if (error && customers.length === 0) {
-        return (
-            <div className="bg-white p-6 rounded-2xl shadow-lg">
-                <div className="text-red-600 text-center p-4">
-                    <div className="text-lg font-semibold mb-2">
-                        Đã xảy ra lỗi
-                    </div>
-                    <div className="mb-4">{error}</div>
-                    <button
-                        onClick={fetchCustomers}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                    >
-                        Thử lại
-                    </button>
-                </div>
-            </div>
-        );
-    }
+    const reload = () => setReloadKey((key) => key + 1);
+
+    const mergeCustomer = (id, data) =>
+        setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)));
+
+    const handleSubmitForm = async (data) => {
+        const editing = form.customer;
+        try {
+            if (editing) {
+                await userService.updateUser(editing.id, data);
+                mergeCustomer(editing.id, data);
+                toast.success("Cập nhật thông tin khách hàng thành công");
+            } else {
+                await userService.createUser(data);
+                toast.success("Tạo khách hàng mới thành công");
+                reload();
+            }
+            return true;
+        } catch (err) {
+            toast.error(
+                `${editing ? "Lỗi khi cập nhật" : "Lỗi khi tạo khách hàng"}: ${getErrorMessage(err, "Lỗi không xác định")}`,
+            );
+            return false;
+        }
+    };
+
+    const handleToggleActive = async () => {
+        const target = toggleTarget;
+        try {
+            const updated = target.isActive
+                ? await userService.deactivateUser(target.id)
+                : await userService.activateUser(target.id);
+            mergeCustomer(target.id, { isActive: !target.isActive, ...(updated || {}) });
+            toast.success(target.isActive ? "Đã vô hiệu hóa tài khoản" : "Đã kích hoạt tài khoản");
+        } catch (err) {
+            toast.error(`Lỗi khi cập nhật: ${getErrorMessage(err, "Lỗi không xác định")}`);
+        } finally {
+            setToggleTarget(null);
+        }
+    };
+
+    const handleDelete = async () => {
+        try {
+            await userService.deleteUser(deleteTarget.id);
+            toast.success("Xóa khách hàng thành công");
+            if (customers.length === 1 && page > 0) setPage(page - 1);
+            else reload();
+        } catch (err) {
+            toast.error(`Lỗi khi xóa khách hàng: ${getErrorMessage(err, "Lỗi không xác định")}`);
+        } finally {
+            setDeleteTarget(null);
+        }
+    };
+
+    const openEdit = (customer) => {
+        setDetail(null);
+        setForm({ open: true, customer });
+    };
 
     return (
-        <div className="bg-white p-6 rounded-2xl shadow-lg">
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-playfair font-bold text-gray-800">
-                    Quản lý khách hàng
-                </h2>
-                <div className="flex items-center space-x-4">
-                    <span className="text-gray-600">
-                        Tổng: {customers.length} khách hàng
-                    </span>
-                    <button
-                        onClick={() => setShowCreateModal(true)}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+        <div className="adm-page">
+            <PageHeader
+                title="Quản lý khách hàng"
+                description="Tài khoản khách hàng, vai trò, trạng thái hoạt động và xác thực email."
+                actions={
+                    <Button
+                        variant="primary"
+                        icon={UserPlus}
+                        onClick={() => setForm({ open: true, customer: null })}
                     >
                         Thêm khách hàng
-                    </button>
-                    <button
-                        onClick={fetchCustomers}
-                        className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
-                    >
-                        Làm mới
-                    </button>
-                </div>
-            </div>
+                    </Button>
+                }
+            />
 
-            <div className="mb-6">
-                <form onSubmit={handleSearchSubmit} className="flex gap-2">
-                    <input
-                        type="text"
-                        placeholder="Tìm kiếm theo tên, email, số điện thoại..."
-                        value={searchTerm}
-                        onChange={handleSearch}
-                        className="flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                        type="submit"
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                    >
-                        Tìm kiếm
-                    </button>
-                    {searchTerm && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setSearchTerm("");
-                                fetchCustomers();
-                            }}
-                            className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-                        >
-                            Xóa
-                        </button>
-                    )}
-                </form>
-            </div>
-
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-gray-500">
-                    <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                        <tr>
-                            <th scope="col" className="px-6 py-3">
-                                ID
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Tên
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Email
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Điện thoại
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Xác thực Email
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Trạng thái
-                            </th>
-                            <th scope="col" className="px-6 py-3">
-                                Thao tác
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {customers.length === 0 ? (
-                            <tr>
-                                <td
-                                    colSpan="7"
-                                    className="px-6 py-4 text-center text-gray-500"
-                                >
-                                    {searchTerm
-                                        ? "Không tìm thấy khách hàng nào phù hợp"
-                                        : "Không có dữ liệu khách hàng"}
-                                </td>
-                            </tr>
-                        ) : (
-                            customers.map((customer) => (
-                                <tr
-                                    key={customer.id}
-                                    className="bg-white border-b hover:bg-gray-50 transition-colors"
-                                >
-                                    <td className="px-6 py-4 font-mono text-gray-600">
-                                        #{customer.id}
-                                    </td>
-                                    <td className="px-6 py-4 font-medium text-gray-900">
-                                        {customer.fullName}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        {customer.email}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        {customer.phone}
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                        <span
-                                            className={`px-2 py-1 rounded-full text-xs ${
-                                                customer.emailVerified
-                                                    ? "bg-green-100 text-green-800"
-                                                    : "bg-yellow-100 text-yellow-800"
-                                            }`}
-                                        >
-                                            {customer.emailVerified
-                                                ? "Đã xác thực"
-                                                : "Chưa xác thực"}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <span
-                                            className={`px-2 py-1 rounded-full text-xs ${
-                                                customer.isActive
-                                                    ? "bg-green-100 text-green-800"
-                                                    : "bg-red-100 text-red-800"
-                                            }`}
-                                        >
-                                            {customer.isActive
-                                                ? "Hoạt động"
-                                                : "Không hoạt động"}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <div className="flex gap-2 justify-center">
-                                            <button
-                                                onClick={() =>
-                                                    handleViewDetails(customer)
-                                                }
-                                                className="w-8 h-8 flex items-center justify-center text-blue-600 hover:text-blue-800 transition-colors border-0 bg-transparent"
-                                                title="Chi tiết"
-                                            >
-                                                <i className="fas fa-info-circle text-lg"></i>
-                                            </button>
-                                            <button
-                                                onClick={() =>
-                                                    handleEdit(customer)
-                                                }
-                                                className="w-8 h-8 flex items-center justify-center text-yellow-600 hover:text-yellow-800 transition-colors border-0 bg-transparent"
-                                                title="Sửa"
-                                            >
-                                                <i className="fas fa-edit text-lg"></i>
-                                            </button>
-                                            <button
-                                                onClick={() =>
-                                                    handleDelete(
-                                                        customer.id,
-                                                        customer.fullName,
-                                                    )
-                                                }
-                                                className="w-8 h-8 flex items-center justify-center text-red-600 hover:text-red-800 transition-colors border-0 bg-transparent"
-                                                title="Xóa"
-                                            >
-                                                <i className="fas fa-trash text-lg"></i>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
+            <div className="adm-card overflow-hidden">
+                <div className="adm-card-header">
+                    <div className="adm-toolbar w-full">
+                        <SearchInput
+                            value={searchInput}
+                            onChange={setSearchInput}
+                            placeholder="Tìm theo tên, email, số điện thoại..."
+                            className="sm:w-80"
+                        />
+                        {customers.length > 0 && (
+                            <span className="text-sm text-slate-500">
+                                {totalElements} khách hàng
+                            </span>
                         )}
-                    </tbody>
-                </table>
+                        <Button
+                            icon={RefreshCw}
+                            onClick={reload}
+                            disabled={loading}
+                            className={toolbarActionClass}
+                        >
+                            Làm mới
+                        </Button>
+                    </div>
+                </div>
+
+                <DataState
+                    loading={loading}
+                    error={error}
+                    onRetry={reload}
+                    isEmpty={customers.length === 0}
+                    empty={{
+                        icon: Users,
+                        title: search
+                            ? "Không tìm thấy khách hàng phù hợp"
+                            : "Chưa có khách hàng nào",
+                        description: search ? "Thử từ khóa khác." : undefined,
+                    }}
+                >
+                    <CustomerTable
+                        customers={customers}
+                        onView={setDetail}
+                        onEdit={openEdit}
+                        onToggleActive={setToggleTarget}
+                        onDelete={setDeleteTarget}
+                    />
+                </DataState>
+
+                {customers.length > 0 && (
+                    <Pagination
+                        page={page}
+                        totalPages={totalPages}
+                        totalElements={totalElements}
+                        pageSize={pageSize}
+                        itemCount={customers.length}
+                        onPageChange={setPage}
+                        pageSizeOptions={PAGE_SIZE_OPTIONS}
+                        onPageSizeChange={(size) => {
+                            setPageSize(size);
+                            setPage(0);
+                        }}
+                        itemLabel="khách hàng"
+                    />
+                )}
             </div>
 
-            {showDetailModal && selectedCustomer && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-xl font-bold text-gray-800">
-                                Chi tiết khách hàng
-                            </h3>
-                            <button
-                                onClick={() => setShowDetailModal(false)}
-                                className="text-gray-500 hover:text-gray-700 text-xl"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Họ và tên:
-                                    </label>
-                                    <p className="text-gray-900 font-semibold">
-                                        {selectedCustomer.fullName}
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Email:
-                                    </label>
-                                    <p className="text-gray-900">
-                                        {selectedCustomer.email}
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Số điện thoại:
-                                    </label>
-                                    <p className="text-gray-900">
-                                        {selectedCustomer.phone}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        ID khách hàng:
-                                    </label>
-                                    <p className="text-gray-900 font-mono">
-                                        #{selectedCustomer.id}
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Trạng thái:
-                                    </label>
-                                    <span
-                                        className={`px-2 py-1 rounded-full text-xs ${
-                                            selectedCustomer.isActive
-                                                ? "bg-green-100 text-green-800"
-                                                : "bg-red-100 text-red-800"
-                                        }`}
-                                    >
-                                        {selectedCustomer.isActive
-                                            ? "Hoạt động"
-                                            : "Không hoạt động"}
-                                    </span>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Xác thực Email:
-                                    </label>
-                                    <span
-                                        className={`px-2 py-1 rounded-full text-xs ${
-                                            selectedCustomer.emailVerified
-                                                ? "bg-green-100 text-green-800"
-                                                : "bg-yellow-100 text-yellow-800"
-                                        }`}
-                                    >
-                                        {selectedCustomer.emailVerified
-                                            ? "Đã xác thực"
-                                            : "Chưa xác thực"}
-                                    </span>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Ngày tham gia:
-                                    </label>
-                                    <p className="text-gray-900">
-                                        {formatDate(selectedCustomer.createdAt)}
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Đăng nhập cuối:
-                                    </label>
-                                    <p className="text-gray-900">
-                                        {formatDate(selectedCustomer.lastLogin)}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {customerStats.recentBookings &&
-                            customerStats.recentBookings.length > 0 && (
-                                <div className="border-t pt-6">
-                                    <h4 className="font-semibold text-lg mb-4 text-gray-800">
-                                        Đặt phòng gần đây
-                                    </h4>
-                                    <div className="space-y-3">
-                                        {customerStats.recentBookings.map(
-                                            (booking, index) => (
-                                                <div
-                                                    key={index}
-                                                    className="flex justify-between items-center p-3 bg-gray-50 rounded"
-                                                >
-                                                    <div>
-                                                        <div className="font-medium">
-                                                            {booking.roomCode}
-                                                        </div>
-                                                        <div className="text-sm text-gray-600">
-                                                            {booking.checkIn} →{" "}
-                                                            {booking.checkOut}
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="font-semibold">
-                                                            {booking.priceTotal?.toLocaleString(
-                                                                "vi-VN",
-                                                            )}
-                                                            ₫
-                                                        </div>
-                                                        <span
-                                                            className={`text-xs px-2 py-1 rounded ${
-                                                                booking.status ===
-                                                                "confirmed"
-                                                                    ? "bg-blue-100 text-blue-800"
-                                                                    : booking.status ===
-                                                                      "completed"
-                                                                    ? "bg-green-100 text-green-800"
-                                                                    : "bg-gray-100 text-gray-800"
-                                                            }`}
-                                                        >
-                                                            {booking.status ===
-                                                            "confirmed"
-                                                                ? "Đã xác nhận"
-                                                                : booking.status ===
-                                                                  "completed"
-                                                                ? "Hoàn thành"
-                                                                : booking.status}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            ),
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-                    </div>
-                </div>
+            {detail && (
+                <CustomerDetailModal
+                    key={detail.id}
+                    customer={detail}
+                    onClose={() => setDetail(null)}
+                    onEdit={openEdit}
+                />
             )}
 
-            {showEditModal && selectedCustomer && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-xl font-bold text-gray-800">
-                                Chỉnh sửa khách hàng
-                            </h3>
-                            <button
-                                onClick={() => setShowEditModal(false)}
-                                className="text-gray-500 hover:text-gray-700 text-xl"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Họ và tên
-                                </label>
-                                <input
-                                    type="text"
-                                    value={editForm.fullName}
-                                    onChange={(e) =>
-                                        setEditForm({
-                                            ...editForm,
-                                            fullName: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Số điện thoại
-                                </label>
-                                <input
-                                    type="text"
-                                    value={editForm.phone}
-                                    onChange={(e) =>
-                                        setEditForm({
-                                            ...editForm,
-                                            phone: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                            </div>
-
-                            <div className="flex items-center space-x-4">
-                                <div className="flex items-center">
-                                    <input
-                                        type="checkbox"
-                                        checked={editForm.isActive}
-                                        onChange={(e) =>
-                                            setEditForm({
-                                                ...editForm,
-                                                isActive: e.target.checked,
-                                            })
-                                        }
-                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                    />
-                                    <label className="ml-2 text-sm text-gray-700">
-                                        Tài khoản hoạt động
-                                    </label>
-                                </div>
-
-                                <div className="flex items-center">
-                                    <input
-                                        type="checkbox"
-                                        checked={editForm.emailVerified}
-                                        onChange={(e) =>
-                                            setEditForm({
-                                                ...editForm,
-                                                emailVerified: e.target.checked,
-                                            })
-                                        }
-                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                    />
-                                    <label className="ml-2 text-sm text-gray-700">
-                                        Email đã xác thực
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end space-x-3 mt-6">
-                            <button
-                                onClick={() => setShowEditModal(false)}
-                                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
-                            >
-                                Hủy
-                            </button>
-                            <button
-                                onClick={handleSaveEdit}
-                                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                            >
-                                Lưu thay đổi
-                            </button>
-                        </div>
-                    </div>
-                </div>
+            {form.open && (
+                <CustomerFormModal
+                    customer={form.customer}
+                    onClose={() => setForm({ open: false, customer: null })}
+                    onSubmit={handleSubmitForm}
+                />
             )}
 
-            {showCreateModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-xl font-bold text-gray-800">
-                                Thêm khách hàng mới
-                            </h3>
-                            <button
-                                onClick={() => setShowCreateModal(false)}
-                                className="text-gray-500 hover:text-gray-700 text-xl"
-                            >
-                                ✕
-                            </button>
-                        </div>
+            <ConfirmDialog
+                open={Boolean(toggleTarget)}
+                onClose={() => setToggleTarget(null)}
+                onConfirm={handleToggleActive}
+                tone={toggleTarget?.isActive ? "danger" : "primary"}
+                icon={toggleTarget?.isActive ? UserX : UserCheck}
+                title={toggleTarget?.isActive ? "Vô hiệu hóa tài khoản" : "Kích hoạt tài khoản"}
+                message={
+                    toggleTarget &&
+                    (toggleTarget.isActive
+                        ? `Tài khoản "${toggleTarget.fullName}" sẽ không thể đăng nhập cho tới khi được kích hoạt lại.`
+                        : `Cho phép tài khoản "${toggleTarget.fullName}" đăng nhập trở lại?`)
+                }
+                confirmText={toggleTarget?.isActive ? "Vô hiệu hóa" : "Kích hoạt"}
+            />
 
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Email *
-                                </label>
-                                <input
-                                    type="email"
-                                    value={createForm.email}
-                                    onChange={(e) =>
-                                        setCreateForm({
-                                            ...createForm,
-                                            email: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Nhập email"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Mật khẩu *
-                                </label>
-                                <input
-                                    type="password"
-                                    value={createForm.password}
-                                    onChange={(e) =>
-                                        setCreateForm({
-                                            ...createForm,
-                                            password: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Nhập mật khẩu"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Họ và tên *
-                                </label>
-                                <input
-                                    type="text"
-                                    value={createForm.fullName}
-                                    onChange={(e) =>
-                                        setCreateForm({
-                                            ...createForm,
-                                            fullName: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Nhập họ và tên"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Số điện thoại
-                                </label>
-                                <input
-                                    type="text"
-                                    value={createForm.phone}
-                                    onChange={(e) =>
-                                        setCreateForm({
-                                            ...createForm,
-                                            phone: e.target.value,
-                                        })
-                                    }
-                                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="Nhập số điện thoại"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end space-x-3 mt-6">
-                            <button
-                                onClick={() => setShowCreateModal(false)}
-                                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
-                            >
-                                Hủy
-                            </button>
-                            <button
-                                onClick={handleCreate}
-                                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                            >
-                                Tạo khách hàng
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ConfirmDialog
+                open={Boolean(deleteTarget)}
+                onClose={() => setDeleteTarget(null)}
+                onConfirm={handleDelete}
+                title="Xóa khách hàng"
+                message={
+                    deleteTarget &&
+                    `Bạn có chắc muốn xóa khách hàng "${deleteTarget.fullName}"? Tài khoản sẽ bị vô hiệu hóa và gỡ khỏi hệ thống.`
+                }
+                confirmText="Xóa khách hàng"
+            />
         </div>
     );
 };

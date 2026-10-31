@@ -8,12 +8,11 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring", uses = {UserMapper.class, ReviewMapper.class})
 public interface ReviewResponseMapper {
+
+    @Mapping(target = "review", ignore = true)
+    @Mapping(target = "responder", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
     ReviewResponse toReviewResponse(ReqReviewResponse request);
 
-    @Mapping(target = "responder", source = "responder")
-    @Mapping(target = "review", source = "review")
-    @Mapping(target = "review.images", ignore = true)
-    @Mapping(target = "review.videos", ignore = true)
     ResReviewResponse toResReviewResponse(ReviewResponse review);
-
 }

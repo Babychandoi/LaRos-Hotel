@@ -1,58 +1,54 @@
 package com.larose.repository;
 
 import com.larose.entity.User;
-import com.larose.entity.enums.OAuthProvider;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    // Các phương thức có sẵn
     Optional<User> findByEmail(String email);
+
     Optional<User> findByEmailAndIsActiveTrue(String email);
+
     Optional<User> findByEmailVerificationToken(String token);
+
     Optional<User> findByPasswordResetToken(String token);
-    List<User> findByIsActiveTrue();
-    List<User> findByEmailVerifiedAndIsActiveTrue(boolean emailVerified);
-
-    // Thêm các phương thức cho Admin
-    long countByIsActiveTrue();
-    long countByIsActiveFalse();
-    long countByEmailVerifiedTrue();
-    long countByEmailVerifiedFalse();
-    long countByDeletedAtIsNotNull();
-    long countByCreatedAtAfter(LocalDateTime date);
-
-    @Query("SELECT u FROM User u WHERE u.lastLogin < :date AND u.isActive = true")
-    List<User> findInactiveUsersSince(@Param("date") LocalDateTime date);
-
-    @Query("SELECT u FROM User u WHERE u.email LIKE %:email% AND u.isActive = true")
-    List<User> findByEmailContainingAndActive(@Param("email") String email);
-
-    boolean existsByEmailAndIsActiveTrue(String email);
-
-    // SỬA: Cho OAuth - sử dụng enum User.OAuthProvider
-    Optional<User> findByOauthProviderAndOauthProviderId(OAuthProvider provider, String providerId);
 
     boolean existsByEmail(String email);
 
-    // THÊM: Các phương thức bổ sung cần thiết
-    Optional<User> findByIdAndIsActiveTrue(Long id);
+    long countByIsActiveTrue();
 
-    List<User> findByIsActive(Boolean isActive);
+    long countByIsActiveFalse();
 
-    @Query("SELECT u FROM User u WHERE u.emailVerified = false AND u.emailVerificationToken IS NOT NULL")
-    List<User> findByEmailVerifiedFalseAndEmailVerificationTokenIsNotNull();
+    long countByEmailVerifiedTrue();
 
-    @Query("SELECT u FROM User u WHERE u.deletedAt IS NOT NULL")
-    List<User> findDeletedUsers();
+    long countByEmailVerifiedFalse();
 
-    boolean existsByEmailAndEmailVerifiedTrue(String email);
+    long countByDeletedAtIsNotNull();
+
+    long countByCreatedAtAfter(LocalDateTime date);
+
+    /** Tìm user cho trang quản trị; tham số null = không lọc. {@code search} phải là chữ thường. */
+    @Query("""
+            SELECT u FROM User u
+            WHERE (:search IS NULL OR LOWER(u.email) LIKE CONCAT('%', :search, '%')
+                   OR LOWER(u.fullName) LIKE CONCAT('%', :search, '%')
+                   OR u.phone LIKE CONCAT('%', :search, '%'))
+              AND (:isActive IS NULL OR u.isActive = :isActive)
+              AND (:emailVerified IS NULL OR u.emailVerified = :emailVerified)
+              AND (:role IS NULL OR EXISTS (SELECT 1 FROM u.roles r WHERE r.name = :role))
+            """)
+    Page<User> searchUsers(@Param("search") String search,
+                           @Param("isActive") Boolean isActive,
+                           @Param("emailVerified") Boolean emailVerified,
+                           @Param("role") String role,
+                           Pageable pageable);
 }

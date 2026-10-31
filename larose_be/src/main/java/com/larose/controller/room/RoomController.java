@@ -7,14 +7,21 @@ import com.larose.dto.response.RoomResponse;
 import com.larose.dto.response.RoomTypeResponse;
 import com.larose.dto.search.RoomSearchDto;
 import com.larose.service.RoomService;
-import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
@@ -22,11 +29,10 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/rooms")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class RoomController {
 
     private final RoomService roomService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     public ResponseEntity<Page<RoomResponse>> getAll(
@@ -36,64 +42,53 @@ public class RoomController {
             @RequestParam(required = false) Long typeId,
             @RequestParam(required = false) Integer capacity,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size
-    ) {
+            @RequestParam(defaultValue = "10") int size) {
         RoomSearchDto searchDto = new RoomSearchDto();
         searchDto.setKeyword(keyword);
         searchDto.setMinPrice(minPrice);
         searchDto.setMaxPrice(maxPrice);
         searchDto.setTypeId(typeId);
-        searchDto.setCapacity(capacity); 
+        searchDto.setCapacity(capacity);
         searchDto.setPageIndex(page);
         searchDto.setPageSize(size);
-
-        Page<RoomResponse> rooms = roomService.getRooms(searchDto);
-        return ResponseEntity.ok(rooms);
+        return ResponseEntity.ok(roomService.getRooms(searchDto));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<RoomResponse> getDetail(@NonNull @PathVariable Long id){
-        RoomResponse rooms = roomService.findById(id);
-        return ResponseEntity.ok(rooms);
-    }
-
-    // ✅ GET /api/rooms/types
     @GetMapping("/types")
     public ResponseEntity<List<RoomTypeResponse>> getAllRoomTypes() {
         return ResponseEntity.ok(roomService.getRoomType());
     }
 
-    // ✅ POST /api/rooms  → tạo mới
-    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('ROLE_ADMIN')")
-    public ResponseEntity<RoomResponse> create(
-            @RequestParam("roomRequest") String roomRequestJson,
-            @RequestPart(value = "images", required = false) List<MultipartFile> images
-    ) throws JsonProcessingException {
-
-        RoomRequest roomRequest = objectMapper.readValue(roomRequestJson, RoomRequest.class);
-        RoomResponse savedRoom = roomService.create(roomRequest, images);
-        return ResponseEntity.status(201).body(savedRoom);
+    @GetMapping("/{id}")
+    public ResponseEntity<RoomResponse> getDetail(@PathVariable Long id) {
+        return ResponseEntity.ok(roomService.findById(id));
     }
 
-    // ✅ PUT /api/rooms/{code}  → cập nhật
+    /** Tạo phòng: multipart gồm "roomRequest" (JSON) và "images" (tuỳ chọn). */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<RoomResponse> create(
+            @RequestParam("roomRequest") String roomRequestJson,
+            @RequestPart(value = "images", required = false) List<MultipartFile> images) throws JsonProcessingException {
+        RoomRequest roomRequest = objectMapper.readValue(roomRequestJson, RoomRequest.class);
+        return ResponseEntity.status(HttpStatus.CREATED).body(roomService.create(roomRequest, images));
+    }
+
     @PutMapping(value = "/{code}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<RoomResponse> update(
             @PathVariable String code,
             @RequestParam("roomRequest") String roomRequestJson,
-            @RequestParam(value = "images", required = false) List<MultipartFile> images
-    ) throws JsonProcessingException {
-        System.out.println(roomRequestJson);
+            @RequestPart(value = "images", required = false) List<MultipartFile> images) throws JsonProcessingException {
         RoomRequest roomRequest = objectMapper.readValue(roomRequestJson, RoomRequest.class);
-        roomRequest.setCode(code); // đảm bảo code khớp
-        RoomResponse updated = roomService.update(roomRequest, images);
-        return ResponseEntity.ok(updated);
+        roomRequest.setCode(code);
+        return ResponseEntity.ok(roomService.update(roomRequest, images));
     }
 
-    // ✅ DELETE /api/rooms/{code}
     @DeleteMapping("/{code}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Void> delete(@PathVariable String code) {
         roomService.delete(code);
-        return ResponseEntity.noContent().build(); // 204 No Content
+        return ResponseEntity.noContent().build();
     }
 }

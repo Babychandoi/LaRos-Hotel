@@ -2,7 +2,6 @@ package com.larose.entity;
 
 import lombok.Data;
 import jakarta.persistence.*;
-import org.hibernate.annotations.CreationTimestamp;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 

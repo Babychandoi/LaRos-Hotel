@@ -1,51 +1,117 @@
-import React from 'react';
-import { NavLink, Link } from 'react-router-dom';
+import { Link, NavLink } from "react-router-dom";
+import { House, LogOut, X } from "lucide-react";
+import { ADMIN_NAV } from "./adminNav";
 
-const AdminSidebar = () => {
-  const navLinkClass = ({ isActive }) =>
-    `flex items-center p-3 my-1 rounded-lg transition-colors ${isActive ? 'bg-rose-500 text-white' : 'text-gray-600 hover:bg-rose-100 hover:text-rose-600'}`;
+const itemBase =
+    "group relative flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40";
+const itemIdle = "text-slate-600 hover:bg-slate-100 hover:text-slate-900";
+const iconBase = "h-[18px] w-[18px] shrink-0";
 
-  return (
-    <div className="w-64 bg-white shadow-lg h-screen p-4">
-      <Link to="/" className="flex items-center space-x-3 mb-8 p-2">
-        <div className="w-10 h-10 bg-gradient-to-br from-pink-400 to-rose-500 rounded-full flex items-center justify-center overflow-hidden">
-          <img src="/logo.jpg" alt="La Rosé Logo" className="w-full h-full object-cover" />
-        </div>
-        <h1 className="font-playfair text-xl font-bold text-rose-deep">La Rosé</h1>
-      </Link>
+/**
+ * Sidebar quản trị: cột trái từ màn hình lg, dạng drawer trượt trên mobile.
+ */
+const AdminSidebar = ({ open, onClose, onLogout }) => (
+    <>
+        <div
+            aria-hidden="true"
+            onClick={onClose}
+            className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity lg:hidden ${
+                open ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+        />
 
-      <nav>
-        <NavLink to="/admin" end className={navLinkClass}>
-          <i className="fas fa-tachometer-alt w-6 mr-3"></i>
-          <span>Bảng điều khiển</span>
-        </NavLink>
-        <NavLink to="/admin/rooms" className={navLinkClass}>
-          <i className="fas fa-bed w-6 mr-3"></i>
-          <span>Quản lý phòng</span>
-        </NavLink>
-        <NavLink to="/admin/bookings" className={navLinkClass}>
-          <i className="fas fa-calendar-check w-6 mr-3"></i>
-          <span>Đơn đặt phòng</span>
-        </NavLink>
-        <NavLink to="/admin/payments" className={navLinkClass}>
-          <i className="fas fa-credit-card w-6 mr-3"></i>
-          <span>Quản lý thanh toán</span>
-        </NavLink>
-        <NavLink to="/admin/customers" className={navLinkClass}>
-          <i className="fas fa-users w-6 mr-3"></i>
-          <span>Khách hàng</span>
-        </NavLink>
-        <NavLink to="/admin/services" className={navLinkClass}>
-          <i className="fas fa-concierge-bell w-6 mr-3"></i>
-          <span>Quản lý dịch vụ</span>
-        </NavLink>
-        <NavLink to="/admin/reviews" className={navLinkClass}>
-          <i className="fas fa-star w-6 mr-3"></i>
-          <span>Đánh giá</span>
-        </NavLink>
-      </nav>
-    </div>
-  );
-};
+        {/* Mobile: drawer cố định (ẩn hẳn khi đóng để không lọt vào tab/đọc màn hình).
+            lg: cột trong luồng, cao bằng trang; phần ruột dính (sticky) cao đúng màn hình. */}
+        <aside
+            id="admin-sidebar"
+            aria-label="Điều hướng quản trị"
+            className={`fixed inset-y-0 left-0 z-50 w-64 shrink-0 border-r border-slate-200 bg-white transition-[translate,visibility] duration-200 lg:visible lg:static lg:z-auto lg:translate-x-0 lg:shadow-none ${
+                open ? "visible translate-x-0 shadow-xl" : "invisible -translate-x-full"
+            }`}
+        >
+            <div className="flex h-full flex-col lg:sticky lg:top-0 lg:h-screen">
+                <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-5">
+                    <Link to="/admin" className="flex min-w-0 items-center gap-3">
+                        <img src="/logo.jpg" alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                        <span className="min-w-0 leading-tight">
+                            <span className="block font-playfair text-lg font-bold text-slate-900">La Rosé</span>
+                            <span className="block whitespace-nowrap text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                                Trang quản trị
+                            </span>
+                        </span>
+                    </Link>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="adm-icon-btn h-9 w-9 lg:hidden"
+                        aria-label="Đóng menu"
+                    >
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+
+                <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
+                    {ADMIN_NAV.map((group) => (
+                        <div key={group.heading}>
+                            <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                                {group.heading}
+                            </p>
+                            <ul className="space-y-1">
+                                {group.items.map((item) => {
+                                    const Icon = item.icon;
+                                    return (
+                                        <li key={item.to}>
+                                            <NavLink
+                                                to={item.to}
+                                                end={item.end}
+                                                className={({ isActive }) =>
+                                                    `${itemBase} ${isActive ? "bg-rose-50 font-medium text-rose-700" : itemIdle}`
+                                                }
+                                            >
+                                                {({ isActive }) => (
+                                                    <>
+                                                        {isActive && (
+                                                            <span
+                                                                aria-hidden="true"
+                                                                className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-rose-600"
+                                                            />
+                                                        )}
+                                                        <Icon
+                                                            className={`${iconBase} ${
+                                                                isActive
+                                                                    ? "text-rose-600"
+                                                                    : "text-slate-400 group-hover:text-slate-600"
+                                                            }`}
+                                                        />
+                                                        <span className="truncate">{item.label}</span>
+                                                    </>
+                                                )}
+                                            </NavLink>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        </div>
+                    ))}
+                </nav>
+
+                <div className="space-y-1 border-t border-slate-200 p-3">
+                    <Link to="/" className={`${itemBase} ${itemIdle}`}>
+                        <House className={`${iconBase} text-slate-400 group-hover:text-slate-600`} />
+                        <span>Về trang chủ</span>
+                    </Link>
+                    <button
+                        type="button"
+                        onClick={onLogout}
+                        className={`${itemBase} text-slate-600 hover:bg-red-50 hover:text-red-600`}
+                    >
+                        <LogOut className={`${iconBase} text-slate-400 group-hover:text-red-500`} />
+                        <span>Đăng xuất</span>
+                    </button>
+                </div>
+            </div>
+        </aside>
+    </>
+);
 
 export default AdminSidebar;

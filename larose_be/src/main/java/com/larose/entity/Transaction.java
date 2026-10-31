@@ -7,6 +7,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 @Entity
 @Table(name = "transactions")
@@ -16,7 +17,6 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class Transaction {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -35,19 +35,24 @@ public class Transaction {
     @Column(name = "provider_transaction_id", length = 255)
     private String providerTransactionId;
 
+    @Builder.Default
     @Column(name = "amount", precision = 12, scale = 2)
     private BigDecimal amount = BigDecimal.ZERO;
 
+    @Builder.Default
     @Column(name = "currency", length = 10)
     private String currency = "VND";
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private Status status = Status.initiated;
 
-    @Enumerated(EnumType.STRING)
+    /** Cột MySQL là enum('payment','refund','payout') chữ thường -> dùng converter thay vì @Enumerated. */
+    @Builder.Default
+    @Convert(converter = TypeConverter.class)
     @Column(name = "type", nullable = false)
-    private Type type = Type.PAYMENT; // <-- Sửa mặc định thành PAYMENT
+    private Type type = Type.PAYMENT;
 
     @Column(name = "metadata", columnDefinition = "JSON")
     private String metadata;
@@ -60,17 +65,29 @@ public class Transaction {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-        public enum Status {
-            initiated,
-            success,
-            failed,
-            refunded
-        }
+    public enum Status {
+        initiated,
+        success,
+        failed,
+        refunded
+    }
 
-    // ✅ SỬA Ở ĐÂY: VIẾT HOA CÁC GIÁ TRỊ ENUM
     public enum Type {
         PAYMENT,
         REFUND,
         PAYOUT
+    }
+
+    @Converter
+    public static class TypeConverter implements AttributeConverter<Type, String> {
+        @Override
+        public String convertToDatabaseColumn(Type type) {
+            return type == null ? null : type.name().toLowerCase(Locale.ROOT);
+        }
+
+        @Override
+        public Type convertToEntityAttribute(String value) {
+            return value == null ? null : Type.valueOf(value.toUpperCase(Locale.ROOT));
+        }
     }
 }

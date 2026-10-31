@@ -8,6 +8,8 @@
  * Dùng singleton pattern — chỉ 1 instance duy nhất trong toàn app.
  */
 
+const SESSION_EVENT = "session-change";
+
 class SessionManager {
     constructor() {
         this.keys = {
@@ -30,6 +32,7 @@ class SessionManager {
         const expireAt = Date.now() + expireInSeconds * 1000;
         localStorage.setItem(this.keys.token, token);
         localStorage.setItem(this.keys.expire, expireAt.toString());
+        this._notify();
     }
 
     /**
@@ -62,6 +65,7 @@ class SessionManager {
      */
     saveUser(user) {
         localStorage.setItem(this.keys.user, JSON.stringify(user));
+        this._notify();
     }
 
     /**
@@ -131,6 +135,20 @@ class SessionManager {
      */
     logout() {
         Object.values(this.keys).forEach((key) => localStorage.removeItem(key));
+        this._notify();
+    }
+
+    /**
+     * Đăng ký lắng nghe thay đổi phiên (đăng nhập/đăng xuất/cập nhật hồ sơ) để UI cập nhật ngay.
+     * @returns {() => void} hàm hủy đăng ký
+     */
+    subscribe(listener) {
+        window.addEventListener(SESSION_EVENT, listener);
+        return () => window.removeEventListener(SESSION_EVENT, listener);
+    }
+
+    _notify() {
+        window.dispatchEvent(new Event(SESSION_EVENT));
     }
 }
 

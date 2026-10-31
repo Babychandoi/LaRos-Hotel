@@ -10,13 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "@supabase/supabase-js": "^2.53.0",
     "@tailwindcss/vite": "^4.1.11",
     "axios": "^1.12.2",
     "chart.js": "^4.5.1",
     "date-fns": "^4.1.0",
-    "lodash": "^4.17.21",
     "lucide-react": "^0.534.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",

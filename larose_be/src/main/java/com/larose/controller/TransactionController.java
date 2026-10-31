@@ -6,7 +6,12 @@ import com.larose.service.TransactionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/transaction")
@@ -14,15 +19,14 @@ import org.springframework.web.bind.annotation.*;
 public class TransactionController {
     private final TransactionService transactionService;
 
+    /** Tạo booking + giao dịch thanh toán cho người dùng đang đăng nhập. */
     @PostMapping
     public ResponseEntity<TransactionResponse> create(@Valid @RequestBody TransactionRequest transaction) {
-        TransactionResponse response = transactionService.create(transaction);
-        System.out.println(response.getBookingDTO().getBookingCode());
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(transactionService.create(transaction));
     }
+
     @GetMapping("/{bookingId}")
     public ResponseEntity<TransactionResponse> getTransaction(@PathVariable Long bookingId) {
-        TransactionResponse response = transactionService.getTransaction(bookingId);
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(transactionService.getTransaction(bookingId));
     }
 }

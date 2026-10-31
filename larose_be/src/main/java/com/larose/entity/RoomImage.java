@@ -19,11 +19,13 @@ public class RoomImage {
     @JoinColumn(name = "room_id", nullable = false)
     private Room room;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 500)
     private String url;
 
+    @Builder.Default
     private Boolean isPrimary = false;
 
+    @Builder.Default
     private Integer sortOrder = 0;
 
     @CreationTimestamp

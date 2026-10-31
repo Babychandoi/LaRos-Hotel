@@ -1,99 +1,53 @@
-import HttpService from './http.service';
+import HttpService from "./http.service";
 
+/** Dịch vụ bổ sung: danh mục (xem công khai, ADMIN quản lý) và dịch vụ gắn vào booking (chủ booking/ADMIN). */
 class AdditionalServiceService {
     constructor() {
-        this.httpService = new HttpService("http://localhost:8080");
+        this.httpService = new HttpService();
         this.basePath = "/api/services";
     }
 
-    // Get all active services
-    async getAllActiveServices() {
-        try {
-            return await this.httpService.get(`${this.basePath}/active`);
-        } catch (error) {
-            console.error("Error fetching active services:", error);
-            throw error;
-        }
+    getAllActiveServices() {
+        return this.httpService.get(`${this.basePath}/active`, { skipAuth: true });
     }
 
-    // Get services by booking id
-    async getServicesByBookingId(bookingId) {
-        try {
-            return await this.httpService.get(`${this.basePath}/booking/${bookingId}`);
-        } catch (error) {
-            console.error("Error fetching services by booking ID:", error);
-            throw error;
-        }
+    getServicesByBookingId(bookingId) {
+        return this.httpService.get(`${this.basePath}/booking/${bookingId}`);
     }
 
-    // Add service to booking
-    async addServiceToBooking(bookingId, serviceData) {
-        try {
-            return await this.httpService.post(`${this.basePath}/booking/${bookingId}`, serviceData);
-        } catch (error) {
-            console.error("Error adding service to booking:", error);
-            throw error;
-        }
+    /** serviceData: { serviceId, quantity?, notes? } */
+    addServiceToBooking(bookingId, serviceData) {
+        return this.httpService.post(`${this.basePath}/booking/${bookingId}`, serviceData);
     }
 
-    // Update booking service quantity
-    async updateBookingServiceQuantity(bookingServiceId, quantity) {
-        try {
-            return await this.httpService.put(`${this.basePath}/booking-service/${bookingServiceId}?quantity=${quantity}`);
-        } catch (error) {
-            console.error("Error updating service quantity:", error);
-            throw error;
-        }
+    updateBookingServiceQuantity(bookingServiceId, quantity) {
+        return this.httpService.put(`${this.basePath}/booking-service/${bookingServiceId}`, null, { params: { quantity } });
     }
 
-    // Remove service from booking
-    async removeServiceFromBooking(bookingServiceId) {
-        try {
-            return await this.httpService.delete(`${this.basePath}/booking-service/${bookingServiceId}`);
-        } catch (error) {
-            console.error("Error removing service from booking:", error);
-            throw error;
-        }
+    removeServiceFromBooking(bookingServiceId) {
+        return this.httpService.delete(`${this.basePath}/booking-service/${bookingServiceId}`);
     }
 
-    // Admin endpoints
-    async getAllServices() {
-        try {
-            return await this.httpService.get(this.basePath);
-        } catch (error) {
-            console.error("Error fetching all services:", error);
-            throw error;
-        }
+    // --- ADMIN ---
+
+    getAllServices() {
+        return this.httpService.get(this.basePath);
     }
 
-    async createService(serviceData) {
-        try {
-            return await this.httpService.post(this.basePath, serviceData);
-        } catch (error) {
-            console.error("Error creating service:", error);
-            throw error;
-        }
+    /** serviceData: { name, description, price, unit, isActive, imageUrl, category: FOOD|BEVERAGE|SPA|TRANSPORT|OTHER } */
+    createService(serviceData) {
+        return this.httpService.post(this.basePath, serviceData);
     }
 
-    async updateService(id, serviceData) {
-        try {
-            return await this.httpService.put(`${this.basePath}/${id}`, serviceData);
-        } catch (error) {
-            console.error("Error updating service:", error);
-            throw error;
-        }
+    updateService(id, serviceData) {
+        return this.httpService.put(`${this.basePath}/${id}`, serviceData);
     }
 
-    async deleteService(id) {
-        try {
-            return await this.httpService.delete(`${this.basePath}/${id}`);
-        } catch (error) {
-            console.error("Error deleting service:", error);
-            throw error;
-        }
+    /** 409 nếu dịch vụ đã được dùng trong booking (hãy tạm ngưng bằng updateService({ isActive: false })). */
+    deleteService(id) {
+        return this.httpService.delete(`${this.basePath}/${id}`);
     }
 }
 
 const additionalServiceService = new AdditionalServiceService();
 export default additionalServiceService;
-

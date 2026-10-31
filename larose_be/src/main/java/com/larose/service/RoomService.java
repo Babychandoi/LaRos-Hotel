@@ -12,6 +12,7 @@ import com.larose.dto.search.RoomSearchDto;
 import com.larose.entity.Room;
 import com.larose.entity.RoomImage;
 import com.larose.entity.RoomType;
+import com.larose.exception.NotFoundException;
 import com.larose.maptruct.RoomMapper;
 import com.larose.repository.RoomImageRepository;
 import com.larose.repository.RoomRepository;
@@ -21,11 +22,11 @@ import lombok.AccessLevel;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.experimental.FieldDefaults;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -35,8 +36,10 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 @FieldDefaults(level = AccessLevel.PRIVATE, makeFinal = true)
 public class RoomService {
     RoomRepository roomRepository;
@@ -44,9 +47,7 @@ public class RoomService {
     RoomTypeRepository roomTypeRepository;
     RoomMapper roomMapper;
     FileUploadUtil fileUploadUtil;
-    
-    // 👇 Thêm ObjectMapper để parse JSON
-    ObjectMapper objectMapper = new ObjectMapper();
+    ObjectMapper objectMapper;
 
     public Page<RoomResponse> getRooms(@NonNull RoomSearchDto request) {
         Pageable pageable = PageRequest.of(request.getPageIndex(), request.getPageSize());
@@ -67,7 +68,6 @@ public class RoomService {
                         .build())
                 .collect(Collectors.groupingBy(RoomImageResponse::getRoomId));
 
-        // ✅ SỬA: Parse amenities từ String → Map trước khi tạo RoomResponse
         List<RoomResponse> responses = roomPage.stream()
                 .map(r -> {
                     Map<String, Object> amenitiesMap = new HashMap<>();
@@ -76,9 +76,7 @@ public class RoomService {
                         try {
                             amenitiesMap = objectMapper.readValue(amenitiesJson, new TypeReference<Map<String, Object>>() {});
                         } catch (JsonProcessingException e) {
-                            // Log cảnh báo nếu cần (có thể inject Logger)
-                            System.err.println("Failed to parse amenities JSON: " + amenitiesJson);
-                            // Giữ map rỗng thay vì ném exception
+                            log.warn("Room {} có amenities JSON không hợp lệ: {}", r.getRoomId(), e.getMessage());
                         }
                     }
                     return RoomResponse.fromProjection(r, amenitiesMap, imagesMap.getOrDefault(r.getRoomId(), new ArrayList<>()));
@@ -89,21 +87,19 @@ public class RoomService {
     }
 
     public RoomResponse findById(Long id) {
-        Room room = roomRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Not found room with id: " + id));
-        return roomMapper.toResponse(room);
+        return roomMapper.toResponse(getRoomById(id));
     }
 
     public List<RoomTypeResponse> getRoomType() {
         List<RoomType> getAll = roomTypeRepository.findAll();
         return getAll.stream()
-                .map(this::mapProjectionToRoomResponse)
+                .map(this::toRoomTypeResponse)
                 .collect(Collectors.toList());
     }
 
     public Room getRoomById(Long id) {
         return roomRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found with id: " + id));
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy phòng với id: " + id));
     }
 
     @Transactional
@@ -118,25 +114,18 @@ public class RoomService {
             room.setCode(code.substring(0, 2) + ((Integer.parseInt(code.substring(2))) + 1));
         }
 
-        RoomType roomType = roomTypeRepository.findById(request.getRoomTypeId())
-                .orElseThrow(() -> new IllegalArgumentException("Room type not found with id: " + request.getRoomTypeId()));
-        room.setRoomType(roomType);
+        room.setRoomType(getRoomType(request.getRoomTypeId()));
         room = roomRepository.save(room);
 
-        uploadImagesAsync(room, images, null);
+        uploadImages(room, images);
         return roomMapper.toResponse(room);
     }
 
     @Transactional
     public RoomResponse update(RoomRequest request, List<MultipartFile> images) {
-        Room room = roomRepository.findByCode(request.getCode())
-                .orElseThrow(() -> new IllegalArgumentException("Room not found with code: " + request.getCode()));
-
+        Room room = getRoomByCode(request.getCode());
         roomMapper.update(room, request);
-
-        RoomType roomType = roomTypeRepository.findById(request.getRoomTypeId())
-                .orElseThrow(() -> new IllegalArgumentException("Room type not found with id: " + request.getRoomTypeId()));
-        room.setRoomType(roomType);
+        room.setRoomType(getRoomType(request.getRoomTypeId()));
 
         if (!CollectionUtils.isEmpty(request.getDeleteImages())) {
             List<RoomImage> deleteList = roomImageRepository.findAllByIdIn(request.getDeleteImages());
@@ -148,19 +137,32 @@ public class RoomService {
             }
         }
         room = roomRepository.save(room);
-        uploadImagesAsync(room, images, request.getDeleteImages());
+        uploadImages(room, images);
         return roomMapper.toResponse(room);
     }
 
+    /** Xoá mềm phòng (đặt deleted_at). */
+    @Transactional
     public void delete(String code) {
-        Room room = roomRepository.findByCode(code)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found with code: " + code));
+        Room room = getRoomByCode(code);
         room.setDeletedAt(LocalDateTime.now());
         roomRepository.save(room);
     }
 
-    @Async
-    public void uploadImagesAsync(Room room, List<MultipartFile> newImages, List<Long> deleteImageIds) {
+    private Room getRoomByCode(String code) {
+        return roomRepository.findByCode(code)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy phòng với mã: " + code));
+    }
+
+    private RoomType getRoomType(Long id) {
+        if (id == null) {
+            throw new IllegalArgumentException("Thiếu loại phòng");
+        }
+        return roomTypeRepository.findById(id)
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy loại phòng với id: " + id));
+    }
+
+    private void uploadImages(Room room, List<MultipartFile> newImages) {
         if (CollectionUtils.isEmpty(newImages)) return;
 
         List<RoomImage> existingImages = roomImageRepository.findByRoomId(room.getId());
@@ -181,7 +183,7 @@ public class RoomService {
         roomImageRepository.saveAll(imgs);
     }
 
-    private RoomTypeResponse mapProjectionToRoomResponse(RoomType roomType) {
+    private RoomTypeResponse toRoomTypeResponse(RoomType roomType) {
         RoomTypeResponse response = new RoomTypeResponse();
         response.setId(roomType.getId());
         response.setName(roomType.getName());

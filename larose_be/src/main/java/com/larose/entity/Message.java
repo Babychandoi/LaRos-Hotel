@@ -39,6 +39,6 @@ public class Message {
     private LocalDateTime createdAt;
 
     public enum SenderType {
-        USER, AGENT, SYSTEM, BOT
+        user, agent, system, bot
     }
 }

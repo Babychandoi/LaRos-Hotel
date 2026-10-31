@@ -1,8 +1,8 @@
-// /src/main/java/com/larose/service/ReviewService.java
-
 package com.larose.service;
 
-import com.larose.config.JwtTokenUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.larose.dto.ReviewDTO;
 import com.larose.dto.ReviewResponseDTO;
 import com.larose.entity.Booking;
@@ -10,297 +10,189 @@ import com.larose.entity.Review;
 import com.larose.entity.ReviewResponse;
 import com.larose.entity.Room;
 import com.larose.entity.User;
+import com.larose.exception.NotFoundException;
 import com.larose.maptruct.ReviewMapper;
 import com.larose.repository.BookingRepository;
 import com.larose.repository.ReviewRepository;
 import com.larose.repository.ReviewResponseRepository;
 import com.larose.repository.RoomRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.servlet.http.HttpServletRequest;
+import com.larose.util.SecurityUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ReviewService {
 
+    private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+
     private final ReviewRepository reviewRepository;
-    private final UserService userService;
-    private final ReviewMapper reviewMapper;
+    private final ReviewResponseRepository reviewResponseRepository;
     private final BookingRepository bookingRepository;
     private final RoomRepository roomRepository;
-    private final ReviewResponseRepository reviewResponseRepository;
-    private final JwtTokenUtil jwtTokenUtil; // Đảm bảo đã inject JwtTokenUtil
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final UserService userService;
+    private final ReviewMapper reviewMapper;
+    private final ObjectMapper objectMapper;
 
-    /**
-     * Lấy tất cả các review đã được 'published' để hiển thị công khai.
-     */
+    /** Các đánh giá đã duyệt (published) để hiển thị công khai. */
     public List<ReviewDTO> getAllReviews() {
-        List<Review> publishedReviews = reviewRepository.findByStatus(Review.ReviewStatus.published);
-        
-        return publishedReviews.stream()
-                .map(this::convertToReviewDTO)
-                .collect(Collectors.toList());
+        return reviewRepository.findByStatus(Review.ReviewStatus.published).stream()
+                .map(this::toDTO)
+                .toList();
     }
 
-    /**
-     * Lấy tất cả reviews cho admin với phân trang và filter theo status
-     * Sắp xếp theo thời gian tạo mới nhất trước
-     */
+    /** Danh sách cho admin, mới nhất trước; status trống hoặc "all" = tất cả. */
     public Page<ReviewDTO> getAllReviewsForAdmin(String status, Pageable pageable) {
-        Page<Review> reviews;
-        
-        if (status != null && !status.isEmpty()) {
-            try {
-                Review.ReviewStatus reviewStatus = Review.ReviewStatus.valueOf(status.toLowerCase());
-                reviews = reviewRepository.findByStatusOrderByCreatedAtDesc(reviewStatus, pageable);
-            } catch (IllegalArgumentException e) {
-                // Nếu status không hợp lệ, lấy tất cả với sorting
-                reviews = reviewRepository.findAllByOrderByCreatedAtDesc(pageable);
-            }
-        } else {
-            // Lấy tất cả reviews với sorting theo thời gian mới nhất
-            reviews = reviewRepository.findAllByOrderByCreatedAtDesc(pageable);
-        }
-        
-        return reviews.map(this::convertToReviewDTO);
+        Review.ReviewStatus reviewStatus = parseStatus(status);
+        Page<Review> reviews = reviewStatus == null
+                ? reviewRepository.findAllByOrderByCreatedAtDesc(pageable)
+                : reviewRepository.findByStatusOrderByCreatedAtDesc(reviewStatus, pageable);
+        return reviews.map(this::toDTO);
     }
 
+    public List<ReviewDTO> getReviewsByUserId(Long userId) {
+        return reviewRepository.findByUserIdOrderByCreatedAtDesc(userId, Pageable.unpaged())
+                .map(this::toDTO)
+                .getContent();
+    }
 
-    /**
-     * TẠO MỚI MỘT REVIEW
-     */
+    public ReviewDTO getReviewById(Long id) {
+        return toDTO(findReview(id));
+    }
+
+    public ReviewDTO getReviewByBookingId(Long bookingId) {
+        return reviewRepository.findFirstByBookingIdOrderByCreatedAtDesc(bookingId)
+                .map(this::toDTO)
+                .orElseThrow(() -> new NotFoundException("Booking " + bookingId + " chưa có đánh giá"));
+    }
+
+    /** Tạo đánh giá của người dùng đang đăng nhập; mặc định chờ duyệt (pending). */
     @Transactional
-    public ReviewDTO create(ReviewDTO reviewDTO, HttpServletRequest request) {
-        // 1. Lấy thông tin user từ token
-        String email = getEmailFromRequest(request);
-        User user = userService.findByEmailAndActive(email);
+    public ReviewDTO create(ReviewDTO reviewDTO) {
+        User user = userService.getActiveUser(SecurityUtils.currentEmail());
 
-        // 2. Chuyển DTO sang Entity
         Review review = reviewMapper.toReview(reviewDTO);
+        review.setId(null);
         review.setUser(user);
-        review.setCreatedAt(LocalDateTime.now());
-        
-        // --- SỬA ĐỔI TẠI ĐÂY ---
-        // Thay vì 'pending', chúng ta đổi thành 'published'
-        review.setStatus(Review.ReviewStatus.pending); // Tự động duyệt và hiển thị ngay
-        // --- KẾT THÚC SỬA ĐỔI ---
+        review.setStatus(Review.ReviewStatus.pending);
+        review.setImages(toJson(reviewDTO.getImages()));
+        review.setVideos(toJson(reviewDTO.getVideos()));
 
-        // Convert images and videos lists to JSON
-        try {
-            if (reviewDTO.getImages() != null && !reviewDTO.getImages().isEmpty()) {
-                review.setImages(objectMapper.writeValueAsString(reviewDTO.getImages()));
-            }
-            if (reviewDTO.getVideos() != null && !reviewDTO.getVideos().isEmpty()) {
-                review.setVideos(objectMapper.writeValueAsString(reviewDTO.getVideos()));
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Error converting media files to JSON: " + e.getMessage());
-        }
-
-        // 3. XỬ LÝ LOGIC BOOKING/ROOM (Đã sửa ở bước trước)
         if (reviewDTO.getBookingId() != null) {
-             Booking booking = bookingRepository.findById(reviewDTO.getBookingId())
-                .orElseThrow(() -> new IllegalArgumentException("Booking not found with id: " + reviewDTO.getBookingId()));
-             
-             if (!booking.getUser().equals(user)) {
-                 throw new SecurityException("User not authorized for this booking");
-             }
-             
-             review.setBooking(booking);
-             review.setRoom(booking.getRoom());
-        } 
-        else if (reviewDTO.getRoomId() != null) {
+            Booking booking = bookingRepository.findById(reviewDTO.getBookingId())
+                    .orElseThrow(() -> new NotFoundException("Không tìm thấy booking với id: " + reviewDTO.getBookingId()));
+            SecurityUtils.checkOwnerOrAdmin(booking.getUser());
+            review.setBooking(booking);
+            review.setRoom(booking.getRoom());
+        } else if (reviewDTO.getRoomId() != null) {
             Room room = roomRepository.findById(reviewDTO.getRoomId())
-                    .orElseThrow(() -> new IllegalArgumentException("Room not found with id: " + reviewDTO.getRoomId()));
+                    .orElseThrow(() -> new NotFoundException("Không tìm thấy phòng với id: " + reviewDTO.getRoomId()));
             review.setRoom(room);
-            review.setBooking(null);
         }
-        else {
-            review.setBooking(null);
-            review.setRoom(null);
-        }
-        
-        // 4. Lưu vào database
-        Review savedReview = reviewRepository.save(review);
-        return convertToReviewDTO(savedReview); // Trả về DTO sau khi save
+
+        return toDTO(reviewRepository.save(review));
     }
 
-    /**
-     * Cập nhật review (đã tồn tại)
-     */
+    /** Sửa nội dung đánh giá: chủ đánh giá hoặc ADMIN; chỉ ADMIN được đổi trạng thái. */
     @Transactional
     public ReviewDTO update(ReviewDTO reviewDTO) {
         if (reviewDTO.getId() == null) {
-            throw new IllegalArgumentException("Review ID is required for update");
+            throw new IllegalArgumentException("Thiếu id đánh giá cần cập nhật");
         }
-        
-        Review review = reviewRepository.findById(reviewDTO.getId())
-                .orElseThrow(() -> new IllegalArgumentException("Review not found"));
-        
-        review.setRating(reviewDTO.getRating());
+        Review review = findReview(reviewDTO.getId());
+        SecurityUtils.checkOwnerOrAdmin(review.getUser());
+
+        if (reviewDTO.getRating() != null) {
+            review.setRating(reviewDTO.getRating());
+        }
         review.setTitle(reviewDTO.getTitle());
         review.setContent(reviewDTO.getContent());
-        review.setUpdatedAt(LocalDateTime.now());
-        
-        if (reviewDTO.getStatus() != null) {
-            try {
-                review.setStatus(Review.ReviewStatus.valueOf(reviewDTO.getStatus()));
-            } catch (IllegalArgumentException e) {
-                // Bỏ qua
-            }
+        if (reviewDTO.getStatus() != null && SecurityUtils.isAdmin()) {
+            review.setStatus(parseStatus(reviewDTO.getStatus()));
         }
-
-        Review updatedReview = reviewRepository.save(review);
-        return convertToReviewDTO(updatedReview);
+        return toDTO(reviewRepository.save(review));
     }
 
-    /**
-     * Cập nhật status của review
-     */
     @Transactional
     public ReviewDTO updateStatus(Long id, String status) {
-        Review review = reviewRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Review not found with id: " + id));
-        
-        try {
-            Review.ReviewStatus reviewStatus = Review.ReviewStatus.valueOf(status.toLowerCase());
-            review.setStatus(reviewStatus);
-            review.setUpdatedAt(LocalDateTime.now());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status: " + status);
+        Review review = findReview(id);
+        Review.ReviewStatus newStatus = parseStatus(status);
+        if (newStatus == null) {
+            throw new IllegalArgumentException("Trạng thái đánh giá không được để trống");
         }
-
-        Review updatedReview = reviewRepository.save(review);
-        return convertToReviewDTO(updatedReview);
+        review.setStatus(newStatus);
+        return toDTO(reviewRepository.save(review));
     }
 
-    /**
-     * Xóa review
-     */
+    /** Xoá đánh giá: chủ đánh giá hoặc ADMIN. */
     @Transactional
     public void delete(Long id) {
-        Review review = reviewRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Review not found"));
+        Review review = findReview(id);
+        SecurityUtils.checkOwnerOrAdmin(review.getUser());
         reviewRepository.delete(review);
     }
 
-    // Lấy email từ JWT Token
-    private String getEmailFromRequest(HttpServletRequest request) {
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            return jwtTokenUtil.getEmailFromToken(token);
-        }
-        throw new IllegalArgumentException("No JWT token found in request");
-    }
-
-    // (Phương thức cũ của bạn)
-    public List<ReviewDTO> getReviewsByStatus(String status, Pageable pageable) {
-        try {
-            Review.ReviewStatus reviewStatus = Review.ReviewStatus.valueOf(status);
-            Page<Review> reviews = reviewRepository.findByStatus(reviewStatus, pageable);
-
-            return reviews.stream()
-                    .map(this::convertToReviewDTO)
-                    .collect(Collectors.toList());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status: " + status);
-        }
-    }
-
-
-    // === PHƯƠNG THỨC MỚI ĐƯỢC THÊM VÀO ĐỂ FIX LỖI ===
-    /**
-     * Lấy danh sách review CỦA MỘT USER CỤ THỂ theo trạng thái (có phân trang)
-     * Phương thức này được gọi từ UserController.
-     */
-    public List<ReviewDTO> getUserReviewsByStatus(String email, String status, int page, int size) {
-        // 1. Tìm User
-        User user = userService.findByEmailAndActive(email);
-
-        // 2. Chuyển đổi status
-        Review.ReviewStatus reviewStatus;
-        try {
-            // Thêm .toLowerCase() để đảm bảo khớp với enum (ví dụ: "published" hoặc "PUBLISHED" đều được)
-            reviewStatus = Review.ReviewStatus.valueOf(status.toLowerCase());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status: " + status);
-        }
-
-        // 3. Tạo Pageable
-        Pageable pageable = PageRequest.of(page, size);
-
-        // 4. Gọi Repository (Sử dụng phương thức đã có sẵn trong ReviewRepository.java)
-        Page<Review> reviewsPage = reviewRepository.findByUserIdAndStatusOrderByCreatedAtDesc(user.getId(), reviewStatus, pageable);
-
-        // 5. Chuyển đổi sang List<ReviewDTO>
-        return reviewsPage.stream()
-                .map(this::convertToReviewDTO)
-                .collect(Collectors.toList());
-    }
-    // === KẾT THÚC PHẦN THÊM MỚI ===
-
-    /**
-     * Lấy review theo ID
-     */
-    public ReviewDTO getReviewById(Long id) {
+    private Review findReview(Long id) {
         return reviewRepository.findById(id)
-                .map(this::convertToReviewDTO)
-                .orElse(null);
+                .orElseThrow(() -> new NotFoundException("Không tìm thấy đánh giá với id: " + id));
     }
 
-    /**
-     * Lấy review theo bookingId
-     */
-    public ReviewDTO getReviewByBookingId(Long bookingId) {
-        return reviewRepository.findByBookingId(bookingId)
-                .map(this::convertToReviewDTO)
-                .orElse(null);
+    private Review.ReviewStatus parseStatus(String status) {
+        if (!StringUtils.hasText(status) || "all".equalsIgnoreCase(status)) {
+            return null;
+        }
+        try {
+            return Review.ReviewStatus.valueOf(status.trim().toLowerCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Trạng thái đánh giá không hợp lệ: " + status);
+        }
     }
 
-    // (Phương thức cũ của bạn)
-    private ReviewDTO convertToReviewDTO(Review review) {
+    private String toJson(List<String> urls) {
+        if (CollectionUtils.isEmpty(urls)) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(urls);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Danh sách ảnh/video không hợp lệ");
+        }
+    }
+
+    private List<String> fromJson(Review review, String json) {
+        if (!StringUtils.hasText(json) || "null".equals(json)) {
+            return null;
+        }
+        try {
+            List<String> urls = objectMapper.readValue(json, STRING_LIST);
+            return CollectionUtils.isEmpty(urls) ? null : urls;
+        } catch (JsonProcessingException e) {
+            log.warn("Không đọc được media của review {}: {}", review.getId(), e.getMessage());
+            return null;
+        }
+    }
+
+    private ReviewDTO toDTO(Review review) {
         ReviewDTO dto = new ReviewDTO();
         dto.setId(review.getId());
         dto.setRating(review.getRating());
         dto.setTitle(review.getTitle());
         dto.setContent(review.getContent());
-        dto.setStatus(review.getStatus().name());
+        dto.setStatus(review.getStatus() != null ? review.getStatus().name() : null);
         dto.setCreatedAt(review.getCreatedAt());
         dto.setUpdatedAt(review.getUpdatedAt());
-
-        // Parse images and videos from JSON
-        try {
-            if (review.getImages() != null && !review.getImages().trim().isEmpty() && !review.getImages().equals("null")) {
-                List<String> images = objectMapper.readValue(review.getImages(), new TypeReference<List<String>>() {});
-                if (images != null && !images.isEmpty()) {
-                    dto.setImages(images);
-                }
-            }
-            if (review.getVideos() != null && !review.getVideos().trim().isEmpty() && !review.getVideos().equals("null")) {
-                List<String> videos = objectMapper.readValue(review.getVideos(), new TypeReference<List<String>>() {});
-                if (videos != null && !videos.isEmpty()) {
-                    dto.setVideos(videos);
-                }
-            }
-        } catch (Exception e) {
-            // Log error but don't fail the conversion
-            System.err.println("Error parsing media files for review " + review.getId() + ": " + e.getMessage());
-            e.printStackTrace();
-        }
+        dto.setImages(fromJson(review, review.getImages()));
+        dto.setVideos(fromJson(review, review.getVideos()));
 
         if (review.getBooking() != null) {
             dto.setBookingId(review.getBooking().getId());
@@ -314,33 +206,29 @@ public class ReviewService {
         if (review.getUser() != null) {
             dto.setUserId(review.getUser().getId());
             dto.setUserEmail(review.getUser().getEmail());
-            dto.setUserFullName(review.getUser().getFullName()); 
+            dto.setUserFullName(review.getUser().getFullName());
         }
-        
-        // Fetch và thêm responses
-        List<ReviewResponse> responses = reviewResponseRepository.findByReviewIdOrderByCreatedAtDesc(review.getId());
-        if (responses != null && !responses.isEmpty()) {
-            List<ReviewResponseDTO> responseDTOs = responses.stream()
-                    .map(this::convertToReviewResponseDTO)
-                    .collect(Collectors.toList());
-            dto.setResponses(responseDTOs);
+
+        List<ReviewResponseDTO> responses = reviewResponseRepository.findByReviewIdOrderByCreatedAtDesc(review.getId())
+                .stream()
+                .map(this::toResponseDTO)
+                .toList();
+        if (!responses.isEmpty()) {
+            dto.setResponses(responses);
         }
-        
         return dto;
     }
-    
-    private ReviewResponseDTO convertToReviewResponseDTO(ReviewResponse response) {
+
+    private ReviewResponseDTO toResponseDTO(ReviewResponse response) {
         ReviewResponseDTO dto = new ReviewResponseDTO();
         dto.setId(response.getId());
         dto.setContent(response.getContent());
         dto.setCreatedAt(response.getCreatedAt());
-        
         if (response.getResponder() != null) {
             dto.setResponderId(response.getResponder().getId());
             dto.setResponderName(response.getResponder().getFullName());
             dto.setResponderEmail(response.getResponder().getEmail());
         }
-        
         return dto;
     }
 }

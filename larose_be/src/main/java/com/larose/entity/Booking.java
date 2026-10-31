@@ -36,7 +36,7 @@ public class Booking {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "room_type_id")
-    private RoomType roomType;  // RoomType giờ có id là Short
+    private RoomType roomType;
 
     @Column(name = "check_in", nullable = false)
     private LocalDate checkIn;
@@ -47,15 +47,19 @@ public class Booking {
     @Column(name = "nights", nullable = false)
     private Integer nights;
 
+    @Builder.Default
     @Column(name = "guests")
     private Integer guests = 1;
 
+    @Builder.Default
     @Column(name = "price_total", precision = 12, scale = 2)
     private BigDecimal priceTotal = BigDecimal.ZERO;
 
+    @Builder.Default
     @Column(name = "deposit_amount", precision = 12, scale = 2)
     private BigDecimal depositAmount = BigDecimal.ZERO;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     private Status status = Status.pending;
@@ -86,4 +90,4 @@ public class Booking {
     public enum Status {
         pending, confirmed, checked_in, checked_out, cancelled, no_show
     }
-}   
+}

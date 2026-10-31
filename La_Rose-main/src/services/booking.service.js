@@ -1,198 +1,77 @@
-// /src/services/booking.service.js
 import HttpService from "./http.service";
-import session from "../utils/SessionManager"; // Giả sử bạn dùng session manager
+
+// Các tham số vnp_* VNPay gắn vào return URL (BE dùng để kiểm chữ ký trước khi xác nhận thanh toán).
+const readVnpReturnParams = () => {
+    if (typeof window === "undefined") return undefined;
+    const entries = [...new URLSearchParams(window.location.search)].filter(([key]) => key.startsWith("vnp_"));
+    return entries.length ? Object.fromEntries(entries) : undefined;
+};
 
 class BookingService {
     constructor() {
-        this.httpService = new HttpService("http://localhost:8080");
-        
-        this.basePath = "/api/booking"; 
-        this.roomTypePath = "/api/room-types";
-        this.vnpayPath = "/api/vnpay";
-        this.transactionPath = "/api/transaction";
+        this.httpService = new HttpService();
+        this.basePath = "/api/booking";
     }
 
-    // --- HÀM 1: LẤY TẤT CẢ LOẠI PHÒNG (Public) ---
-    async getAllRoomTypes() {
-        try {
-            // Giữ nguyên { skipAuth: true }
-            return await this.httpService.get(this.roomTypePath, { skipAuth: true });
-        } catch (error) {
-            console.error("Error fetching room types:", error);
-            throw error;
-        }
+    // --- Công khai ---
+
+    /** Các booking còn giữ phòng (để khoá lịch). */
+    getBookedDates(roomId) {
+        return this.httpService.get(`${this.basePath}/booking-date/${roomId}`, { skipAuth: true });
     }
 
-    // --- HÀM 2: LẤY NGÀY ĐÃ ĐẶT CỦA 1 PHÒNG (Public) ---
-    async getBookedDates(roomId) {
-        try {
-            // ✅ SỬA: Thêm { skipAuth: true }
-            return await this.httpService.get(`${this.basePath}/booking-date/${roomId}`, { skipAuth: true });
-        } catch (error) {
-            console.error("Error fetching booked dates:", error);
-            throw error;
-        }
+    /** @returns {Promise<boolean>} true nếu phòng còn trống trong [checkIn, checkOut). */
+    checkRoomAvailability(roomId, checkIn, checkOut) {
+        return this.httpService.post(`${this.basePath}/check-availability`, { roomId, checkIn, checkOut }, { skipAuth: true });
     }
 
-    // --- HÀM 3: KIỂM TRA TÍNH KHẢ DỤNG (Public) ---
-    async checkRoomAvailability(roomId, checkIn, checkOut) {
-        try {
-            const checkData = { roomId, checkIn, checkOut };
-            // Giữ nguyên { skipAuth: true }
-            return await this.httpService.post(
-                `${this.basePath}/check-availability`, 
-                checkData,
-                { skipAuth: true }
-            );
-        } catch (error) {
-            console.error("Error checking availability:", error);
-            throw error;
-        }
-    }
-
-    // --- HÀM 4: TẠO BOOKING (Yêu cầu đăng nhập, không skipAuth) ---
-    async createBooking(bookingData) {
-         try {
-             return await this.httpService.post(`${this.basePath}`, bookingData);
-         } catch (error) {
-             console.error("Error creating booking:", error);
-             throw error;
-         }
-    }
-    async returnBookingVNPay(bookingCode) {
-        try {
-            return await this.httpService.get(`${this.vnpayPath}/vnpay_return/${bookingCode}`);
-        } catch (error) {
-            console.error("Error returning booking VNPay:", error);
-            throw error;
-        }
-    }
-
-    // Gửi thông tin booking từ QR code về backend
-    async submitBookingFromQR(bookingData) {
-        try {
-            return await this.httpService.post(
-                `${this.vnpayPath}/vnpay_return/qr`,
-                bookingData,
-                { skipAuth: true } // Có thể không cần auth vì từ QR code
-            );
-        } catch (error) {
-            console.error("Error submitting booking from QR:", error);
-            throw error;
-        }
-    }
-
-    // --- HÀM 5: TẠO TRANSACTION (Yêu cầu đăng nhập, không skipAuth) ---
-    async createTransaction(transactionData) {
-        try {
-            return await this.httpService.post(
-                this.transactionPath, 
-                transactionData
-            );
-        } catch (error) {
-            console.error("Error creating transaction:", error);
-            throw error;
-        }
-    }
-
-    // --- HÀM 6: GỌI VNPAY (Public, dùng fetch riêng, không cần sửa) ---
-    async submitVNPayOrder(orderData) {
-        try {
-            const params = new URLSearchParams();
-            params.append("amount", orderData.amount.toString());
-            
-            const safeOrderInfo = `Booking${orderData.roomId || Date.now().toString().slice(-6)}`;
-            params.append("orderInfo", safeOrderInfo);
-            
-            if(orderData.roomId) {
-                params.append("roomId", orderData.roomId.toString());
-                params.append("txnRef",`TXN_${orderData.roomId}${Date.now()}`)
-            }
-
-            const response = await fetch(
-                `${this.httpService.baseURL}${this.vnpayPath}/submit-order`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                    body: params,
-                },
-            );
-            
-            if (!response.ok) {
-              const errorText = await response.text();
-              throw new Error(`HTTP error! status: ${response.status}, ${errorText}`);
-            }
-
-            const contentType = response.headers.get("content-type");
-            let result;
-
-            if (contentType && contentType.includes("application/json")) {
-                result = await response.json();
-            } else {
-                const text = await response.text();
-                try {
-                     result = JSON.parse(text);
-                } catch(e) {
-                     result = { paymentUrl: text.startsWith("http") ? text : null };
-                }
-            }
-            return result;
-
-        } catch (error) {
-            console.error("Error submitting VNPay order:", error);
-            throw new Error("Không thể kết nối đến cổng thanh toán VNPay: " + error.message);
-        }
-    }
-
-    // --- HÀM 7: LẤY TOKEN (Helper) ---
-    getAccessToken() {
-        return session.getToken ? session.getToken() : localStorage.getItem("accessToken");
-    }
-    
-    // --- CÁC HÀM CẦN ĐĂNG NHẬP (Không skipAuth) ---
-
-    // Lấy lịch sử (Yêu cầu đăng nhập)
-    async getHistoryBookings(params) {
-        try {
-            return await this.httpService.get(`${this.basePath}/my-history`, { params });
-        } catch (error) {
-            console.error("Error in getHistoryBookings:", error);
-            throw error;
-        }
-    }
-
-    // Hủy booking (Yêu cầu đăng nhập)
-    async cancelBooking(bookingId) {
-        try {
-            return await this.httpService.put(`${this.basePath}/cancel/${bookingId}`);
-        } catch (error) {
-            console.error("Error in cancelBooking:", error);
-            throw error;
-        }
-    }
-
-    // Lấy chi tiết transaction theo bookingId
-    async getTransaction(bookingId) {
-        try {
-            return await this.httpService.get(`${this.transactionPath}/${bookingId}`);
-        } catch (error) {
-            console.error("Error in getTransaction:", error);
-            throw error;
-        }
-    }
-
-    // Lấy gợi ý tìm kiếm dựa trên lịch sử đặt phòng
+    /** Gợi ý tìm kiếm (cá nhân hoá nếu đã đăng nhập); lỗi thì trả mảng rỗng. */
     async getSearchSuggestions() {
         try {
-            // This endpoint requires authentication but gracefully handles unauthenticated users
             return await this.httpService.get(`${this.basePath}/suggestions`);
         } catch (error) {
             console.error("Error fetching search suggestions:", error);
-            // Return empty array on error to gracefully degrade
             return [];
         }
+    }
+
+    // --- Cần đăng nhập ---
+
+    /** Tạo booking + giao dịch (initiated) cho người dùng đang đăng nhập. */
+    createTransaction(transactionData) {
+        return this.httpService.post("/api/transaction", transactionData);
+    }
+
+    /** Lấy URL thanh toán VNPay. orderData: { amount, orderInfo, roomId }. */
+    submitVNPayOrder(orderData) {
+        const params = new URLSearchParams();
+        params.append("amount", String(orderData.amount));
+        params.append("orderInfo", orderData.orderInfo || `Booking${orderData.roomId || Date.now().toString().slice(-6)}`);
+        params.append("roomId", String(orderData.roomId ?? ""));
+        params.append("txnRef", `TXN_${orderData.roomId ?? ""}${Date.now()}`);
+        return this.httpService.post("/api/vnpay/submit-order", params);
+    }
+
+    /**
+     * Xác nhận đơn sau khi đặt (tiền mặt) hoặc khi VNPay chuyển về (đánh dấu đã thanh toán) và gửi email xác nhận.
+     * Với VNPay, tự đính kèm các tham số vnp_* đang có trên URL để BE kiểm chữ ký.
+     */
+    submitBookingFromQR(bookingData) {
+        const vnpParams = bookingData?.paymentMethod === "vnpay" ? readVnpReturnParams() : undefined;
+        return this.httpService.post("/api/vnpay/vnpay_return/qr", { ...bookingData, vnpParams });
+    }
+
+    /** Lịch sử đặt phòng của tôi. params: { status ("all" | trạng thái), page, size }. */
+    getHistoryBookings(params) {
+        return this.httpService.get(`${this.basePath}/my-history`, { params });
+    }
+
+    cancelBooking(bookingId) {
+        return this.httpService.put(`${this.basePath}/cancel/${bookingId}`);
+    }
+
+    getTransaction(bookingId) {
+        return this.httpService.get(`/api/transaction/${bookingId}`);
     }
 }
 

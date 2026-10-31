@@ -29,8 +29,9 @@ public class Room {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "room_type_id", nullable = false)
-    private RoomType roomType;  // RoomType giờ có id là Short
+    private RoomType roomType;
 
+    @Builder.Default
     @OneToMany(mappedBy = "room", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<RoomImage> images = new ArrayList<>();
 
@@ -44,9 +45,11 @@ public class Room {
     @Column(name = "capacity")
     private Integer capacity;
 
+    @Builder.Default
     @Column(name = "price", precision = 10, scale = 2)
     private BigDecimal price = BigDecimal.ZERO;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(name = "status")
     private RoomStatus status = RoomStatus.available;
@@ -55,9 +58,11 @@ public class Room {
     @Column(name = "amenities", columnDefinition = "JSON")
     private Map<String,Object> amenities;
 
+    @Builder.Default
     @Column(name = "created_at")
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    @Builder.Default
     @Column(name = "updated_at")
     private LocalDateTime updatedAt = LocalDateTime.now();
 

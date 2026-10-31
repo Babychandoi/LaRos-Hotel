@@ -1,29 +1,39 @@
 package com.larose.config;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.larose.dto.ErrorResponse;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod; // ✅ SỬA: Thêm import này
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.cors.CorsConfiguration;
 
-import java.util.Arrays;
+import java.io.IOException;
 
 @Configuration
 @EnableMethodSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
-    @Autowired
-    private JwtAuthFilter jwtAuthFilter;
+    private static final String ADMIN = "ADMIN";
+
+    private final JwtAuthFilter jwtAuthFilter;
+    private final ObjectMapper objectMapper;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -33,118 +43,66 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .cors(cors -> cors.configurationSource(request -> {
-                CorsConfiguration config = new CorsConfiguration();
-                config.setAllowedOriginPatterns(Arrays.asList("http://localhost:5173", "http://localhost:3000"));
-                config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-                config.setAllowedHeaders(Arrays.asList("*"));
-                config.setAllowCredentials(true);
-                config.setMaxAge(3600L);
-                return config;
-            }))
-            .csrf(csrf -> csrf.disable())
+            .cors(Customizer.withDefaults())
+            .csrf(AbstractHttpConfigurer::disable)
+            .httpBasic(AbstractHttpConfigurer::disable)
+            .formLogin(AbstractHttpConfigurer::disable)
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .exceptionHandling(eh -> eh
+                .authenticationEntryPoint((req, res, ex) ->
+                    writeError(res, HttpStatus.UNAUTHORIZED, "Bạn cần đăng nhập để thực hiện thao tác này"))
+                .accessDeniedHandler((req, res, ex) ->
+                    writeError(res, HttpStatus.FORBIDDEN, "Bạn không có quyền thực hiện thao tác này")))
+            // Rule cụ thể đặt trước rule chung (rule đầu tiên khớp sẽ được áp dụng)
             .authorizeHttpRequests(auth -> auth
-                // 1. CÁC ENDPOINT CÔNG KHAI (permitAll)
-                .requestMatchers(
-                    "/api/auth/**",
-                    "/api/statistical/**",
-                    // "/api/rooms/**", // ✅ SỬA: Xóa dòng này đi, đưa xuống dưới
-                    "/api/public/**",
-                    "/api/email/**",
-                    "/api/health",
-                    "/api/config",
-                    "/api/room-types/**", // Giữ lại, vì booking.service dùng
-                    "/api/booking/check-availability",
-                    "/api/vnpay/submit-order",
-                    "/api/vnpay/vnpay_return",
-                    "/api/vnpay/**",
-                    "/api/vnpay/vnpay_return/qr",
-                    "/api/payments/webhook/**",
-                    "/uploads/**", // ✅ SỬA: Cho phép truy cập static files (ảnh/video đã upload)
-                    "/images/**", // ✅ Cho phép truy cập logo và images từ resources
-                    "/v3/api-docs/**",
-                    "/v3/api-docs",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html"
-                ).permitAll()
-
-                // ✅ SỬA: Thêm khối này để cho phép xem (GET)
-                // Đây là API cho HomePage, RoomsPage, AboutPage
-                .requestMatchers(HttpMethod.GET,
-                		"/api/rooms",
-                	    "/api/rooms/*",
-                	    "/api/rooms/**",
-                	    "/api/reviews",
-                	    "/api/reviews/*",
-                	    "/api/reviews/**",
-                	    "/api/booking/booking-date/**",
-                	    "/api/services/active" // Cho phép xem dịch vụ công khai
-                ).permitAll()
-                
-                // ✅ SỬA: Cho phép OPTIONS (CORS preflight) cho tất cả endpoints
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers("/error").permitAll()
 
-                // 2. CÁC ENDPOINT CỦA USER (Yêu cầu xác thực)
-                // Đặt phòng (POST), hủy phòng (PUT), xem lịch sử (GET) mới cần đăng nhập
-                .requestMatchers(
-                    "/api/users/profile/**",
-                    "/api/users/bookings/**",
-                    "/api/users/reviews/**",
-                    "/api/users/change-password",
-                    "/api/booking/**", // ✅ SỬA: Rule này BẢO VỆ việc đặt phòng (POST/PUT)
-                    "/api/notifications/**",
-                    "/api/conversations/**",
-                    "/api/payments/create",
-                    "/api/payments/transactions",
-                    "/api/upload/**", // ✅ SỬA: Yêu cầu authentication cho upload
-                    "/api/users/**",
-                    "/api/transaction",
-                    "/api/transaction/**",
-                    "/api/services/booking/**", // Quản lý dịch vụ trong booking
-                    "/api/services/booking-service/**" // Cập nhật/xóa dịch vụ
-                ).hasAnyRole("USER", "ADMIN")
-                
-                // POST review cũng cần đăng nhập
-                .requestMatchers(HttpMethod.POST, "/api/reviews").hasAnyRole("USER", "ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/reviews").hasAnyRole("USER", "ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/reviews/**").hasAnyRole("USER", "ADMIN")
+                // 1. Quản trị
+                .requestMatchers("/api/admin/**", "/api/statistical/**", "/api/vat-report/**").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.GET, "/api/reviews/admin").hasRole(ADMIN)
+                .requestMatchers("/api/reviews/response", "/api/reviews/response/**").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.PUT, "/api/reviews/{id}/status").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.POST, "/api/rooms").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.PUT, "/api/rooms/**").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.DELETE, "/api/rooms/**").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.GET, "/api/services").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.POST, "/api/services").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.PUT, "/api/services/{id}").hasRole(ADMIN)
+                .requestMatchers(HttpMethod.DELETE, "/api/services/{id}").hasRole(ADMIN)
 
+                // 2. Công khai
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/uploads/**", "/images/**").permitAll()
+                .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                .requestMatchers(HttpMethod.GET,
+                    "/api/rooms", "/api/rooms/types", "/api/rooms/{id}",
+                    "/api/reviews", "/api/reviews/{id}", "/api/reviews/booking/{bookingId}",
+                    "/api/services/active", "/api/services/{id}",
+                    "/api/booking/suggestions", "/api/booking/booking-date/{roomId}"
+                ).permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/booking/check-availability", "/api/chatbot/ask").permitAll()
 
-                // 3. CÁC ENDPOINT CỦA ADMIN
-                .requestMatchers(
-                    "/api/reviews/admin",
-                    "/api/reviews/response/**",
-                    "/api/staff/**",
-                    "/api.admin/**",
-                    "/api/manager/**"
-                ).hasRole("ADMIN")
-                
-                // Admin cập nhật status của review
-                .requestMatchers(HttpMethod.PUT, "/api/reviews/*/status").hasRole("ADMIN")
-                
-                // Admin quản lý danh mục dịch vụ
-                .requestMatchers(HttpMethod.POST, "/api/services").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.PUT, "/api/services/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.DELETE, "/api/services/**").hasRole("ADMIN")
-                .requestMatchers(HttpMethod.GET, "/api/services").hasRole("ADMIN")
-
-                // 4. MỌI REQUEST KHÁC
+                // 3. Còn lại: phải đăng nhập (quyền sở hữu kiểm tra ở tầng service)
                 .anyRequest().authenticated()
             )
-            .httpBasic(httpBasic -> httpBasic.disable())
-            .formLogin(form -> form.disable())
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(
-            UserDetailsService userDetailsService,
-            PasswordEncoder passwordEncoder) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService);
+    public AuthenticationManager authenticationManager(UserDetailsService userDetailsService,
+                                                       PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
         return new ProviderManager(provider);
+    }
+
+    private void writeError(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+        response.setStatus(status.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
+        objectMapper.writeValue(response.getOutputStream(), ErrorResponse.of(status, message));
     }
 }

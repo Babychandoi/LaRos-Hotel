@@ -1,95 +1,87 @@
-import React, { useState, useEffect } from "react";
-import { Outlet, useNavigate, useLocation } from "react-router-dom";
+import { Suspense, useEffect, useState } from "react";
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { ToastContainer } from "react-toastify";
+import PageLoader from "../components/common/PageLoader";
 import AdminSidebar from "./components/AdminSidebar";
-import { LogOut, User, Bell, Search } from "lucide-react";
+import AdminHeader from "./components/AdminHeader";
+import { getAdminPageTitle } from "./components/adminNav";
+import { getAdminSession } from "./components/adminAccess";
 import session from "../utils/SessionManager";
+import authService from "../services/auth.service";
 
 const AdminLayout = () => {
     const navigate = useNavigate();
-    const location = useLocation();
-    const [user, setUser] = useState(null);
-    const [notifications, setNotifications] = useState(3); // Example notification count
+    const { pathname } = useLocation();
+    const [user, setUser] = useState(getAdminSession);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const title = getAdminPageTitle(pathname);
+
+    // Mỗi lần chuyển trang: kiểm tra lại phiên (token có thể đã hết hạn) và đóng drawer mobile.
+    useEffect(() => {
+        setUser(getAdminSession());
+        setSidebarOpen(false);
+    }, [pathname]);
 
     useEffect(() => {
-        setNotifications(3);
-        const currentUser = session.getUser();
-        if (
-            !currentUser ||
-            (currentUser.roles[0].name.toLowerCase() !== "admin" &&
-                currentUser.roles[0].name.toLowerCase() !== "superadmin")
-        ) {
-            navigate("/admin/login");
-            return;
-        }
-        setUser(currentUser);
-    }, [navigate]);
+        document.title = `${title} · La Rosé Admin`;
+        return () => {
+            document.title = "La Rosé Hotel";
+        };
+    }, [title]);
+
+    // Drawer mobile đang mở: khoá cuộn nền, đóng bằng phím Esc.
+    useEffect(() => {
+        if (!sidebarOpen) return undefined;
+        const handleKey = (event) => {
+            if (event.key === "Escape") setSidebarOpen(false);
+        };
+        document.addEventListener("keydown", handleKey);
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.removeEventListener("keydown", handleKey);
+            document.body.style.overflow = "";
+        };
+    }, [sidebarOpen]);
 
     const handleLogout = () => {
         session.logout();
-        navigate("/admin/login");
+        authService.logout();
+        navigate("/admin/login", { replace: true });
     };
 
-    const getPageTitle = () => {
-        const path = location.pathname;
-        if (path === "/admin") return "Tổng quan";
-        if (path === "/admin/users") return "Quản lý Người dùng";
-        if (path === "/admin/hotels") return "Quản lý Khách sạn";
-        if (path === "/admin/bookings") return "Quản lý Đặt phòng";
-        if (path === "/admin/rooms") return "Quản lý Phòng";
-        if (path === "/admin/customers") return "Quản lý Khách hàng";
-        if (path === "/admin/services") return "Quản lý Dịch vụ";
-        return "Trang Quản Trị";
-    };
+    if (!user) return <Navigate to="/admin/login" replace />;
 
     return (
-        <div className="flex h-screen bg-gray-50 font-poppins">
-            <AdminSidebar />
-            <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Header */}
-                <header className="bg-white shadow-sm border-b border-gray-200">
-                    <div className="flex items-center justify-between p-4">
-                        <div>
-                            <h1 className="text-xl font-semibold text-gray-800">
-                                {getPageTitle()}
-                            </h1>
-                            <p className="text-sm text-gray-500">
-                                Hệ thống quản trị La Rosé Hotel
-                            </p>
-                        </div>
+        <div className="flex min-h-screen bg-slate-50 font-poppins text-slate-800">
+            <AdminSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} onLogout={handleLogout} />
 
-                        <div className="flex items-center space-x-4">
-                            {/* Search */}
-                    
-                            {/* User Menu */}
-                            <div className="flex items-center space-x-3">
-                                <div className="text-right">
-                                    <p className="text-sm font-medium text-gray-800">
-                                        {user?.fullName || "Quản trị viên"}
-                                    </p>
-                                    <p className="text-xs text-gray-500 capitalize">
-                                        {user?.role || "admin"}
-                                    </p>
-                                </div>
-                                <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">
-                                    <User className="w-5 h-5" />
-                                </div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="p-2 text-gray-600 hover:text-red-600 transition-colors"
-                                    title="Đăng xuất"
-                                >
-                                    <LogOut className="w-5 h-5" />
-                                </button>
-                            </div>
-                        </div>
+            <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+                <AdminHeader
+                    title={title}
+                    user={user}
+                    menuOpen={sidebarOpen}
+                    onMenuClick={() => setSidebarOpen(true)}
+                    onLogout={handleLogout}
+                />
+                <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+                    <div className="mx-auto w-full min-w-0 max-w-7xl">
+                        <Suspense fallback={<PageLoader />}>
+                            <Outlet />
+                        </Suspense>
                     </div>
-                </header>
-
-                {/* Main Content */}
-                <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-50 p-6">
-                    <Outlet />
                 </main>
             </div>
+
+            {/* Toast dùng chung cho mọi trang quản trị (các trang con chỉ gọi toast(), không tự đặt container). */}
+            <ToastContainer
+                position="top-right"
+                autoClose={3000}
+                newestOnTop
+                closeOnClick
+                pauseOnHover
+                theme="light"
+                style={{ top: "4.5rem" }}
+            />
         </div>
     );
 };

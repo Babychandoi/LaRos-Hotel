@@ -1,64 +1,59 @@
 package com.larose.config;
 
-import io.jsonwebtoken.io.IOException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-@Component
-public class JwtAuthFilter extends OncePerRequestFilter {
-    @Autowired
-    private JwtTokenUtil jwtTokenUtil;
+import java.io.IOException;
 
-    @Autowired
-    private UserDetailsService userDetailsService;
+/**
+ * Đọc "Authorization: Bearer <token>" và đặt Authentication vào SecurityContext.
+ * Token sai/hết hạn thì bỏ qua (request được xử lý như khách, SecurityConfig quyết định 401/permitAll).
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class JwtAuthFilter extends OncePerRequestFilter {
+
+    private static final String BEARER_PREFIX = "Bearer ";
+
+    private final JwtTokenUtil jwtTokenUtil;
+    private final UserDetailsService userDetailsService;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                      HttpServletResponse response,
-                                      FilterChain filterChain)
-            throws ServletException, IOException, java.io.IOException {
-
+    protected void doFilterInternal(@NonNull HttpServletRequest request,
+                                    @NonNull HttpServletResponse response,
+                                    @NonNull FilterChain filterChain) throws ServletException, IOException {
         String authHeader = request.getHeader("Authorization");
-        String email = null;
-        String token = null;
-
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7);
-            
-            // SỬA LỖI: Bọc toàn bộ logic xác thực vào try-catch
+        if (authHeader != null && authHeader.startsWith(BEARER_PREFIX)
+                && SecurityContextHolder.getContext().getAuthentication() == null) {
+            String token = authHeader.substring(BEARER_PREFIX.length());
             try {
-                email = jwtTokenUtil.getEmailFromToken(token);
-
-                // Chỉ thực hiện nếu có email VÀ chưa được xác thực
-                if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                if (jwtTokenUtil.validateToken(token)) {
+                    String email = jwtTokenUtil.getEmailFromToken(token);
                     UserDetails userDetails = userDetailsService.loadUserByUsername(email);
-                    
-                    // Nếu token hợp lệ (validateToken sẽ kiểm tra cả chữ ký và hạn)
-                    if (jwtTokenUtil.validateToken(token)) { 
+                    if (userDetails.isEnabled()) {
                         UsernamePasswordAuthenticationToken authToken =
                                 new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                        authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                         SecurityContextHolder.getContext().setAuthentication(authToken);
                     }
                 }
             } catch (Exception e) {
-                // Nếu token có vấn đề (hết hạn, sai chữ ký, etc.)
-                // logger.warn("Cannot parse or validate JWT token: {}", e.getMessage());
-                // Không làm gì cả, chỉ log. 
-                // Request sẽ đi tiếp mà không được xác thực (unauthenticated)
-                // và sẽ được SecurityConfig xử lý (permitAll)
+                log.debug("Bỏ qua JWT không hợp lệ: {}", e.getMessage());
             }
         }
-
-        // Luôn luôn gọi filter chain để đi tiếp
         filterChain.doFilter(request, response);
     }
 }

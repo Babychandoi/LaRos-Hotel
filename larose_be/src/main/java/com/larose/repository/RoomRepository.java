@@ -68,9 +68,5 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
             """, nativeQuery = true)
     Room getTop1();
 
-    @Query(value = """
-            SELECT COUNT(DISTINCT r.id)
-            FROM rooms r
-            """, nativeQuery = true)
-    Long countAllRooms();
+    long countByDeletedAtIsNull();
 }
